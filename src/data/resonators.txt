@@ -1,0 +1,74 @@
+# Resonator roster: the single source for names, modes, order, element and weapon.
+#
+# One resonator per line, NEWEST FIRST (the picker shows them in this order):
+#
+#   Name ; Mode ; Element ; Weapon
+#
+# Mode    single                      one playstyle
+#         Mode A / Mode B             dual mode, first one is the default
+#         element                     switches element (Rover); list them in Element
+# Element Glacio, Fusion, Electro, Aero, Spectro, Havoc  (several: "Havoc / Spectro")
+# Weapon  Broadblade, Sword, Pistols, Gauntlets, Rectifier
+#
+# Names must match the game's English name so pictures can be found.
+# A character the image API doesn't have yet still shows up, without art.
+# Run `npm run roster` to pull new characters and check modes against the API.
+
+Suoming ; single ; Electro ; Sword
+Hsin ; Unison / Electro Flare ; Electro ; Rectifier
+Jingran ; single ; Fusion ; Broadblade
+Qingxiao ; single ; Aero ; Sword
+Suisui ; single ; Glacio ; Rectifier
+Yangyang: Xuanling ; single ; Havoc ; Sword
+Lucilla ; Glacio Chafe / Echo ; Glacio ; Rectifier
+Lucy ; single ; Spectro ; Pistols
+Rebecca ; single ; Electro ; Pistols
+Denia ; Fusion Burst / Tune Strain ; Fusion ; Rectifier
+Hiyuki ; single ; Glacio ; Sword
+Sigrika ; single ; Aero ; Gauntlets
+Luuk Herssen ; single ; Spectro ; Gauntlets
+Aemeath ; Tune Rupture / Fusion Burst ; Fusion ; Sword
+Mornye ; single ; Fusion ; Broadblade
+Lynae ; Tune Rupture / Tune Strain ; Spectro ; Pistols
+Buling ; single ; Electro ; Rectifier
+Chisa ; single ; Havoc ; Broadblade
+Qiuyuan ; single ; Aero ; Sword
+Galbrena ; single ; Fusion ; Pistols
+Iuno ; single ; Aero ; Gauntlets
+Augusta ; single ; Electro ; Broadblade
+Phrolova ; single ; Havoc ; Rectifier
+Lupa ; single ; Fusion ; Broadblade
+Cartethyia ; single ; Aero ; Sword
+Ciaccona ; single ; Aero ; Pistols
+Zani ; single ; Spectro ; Gauntlets
+Cantarella ; single ; Havoc ; Rectifier
+Brant ; single ; Fusion ; Sword
+Phoebe ; single ; Spectro ; Rectifier
+Roccia ; single ; Havoc ; Gauntlets
+Carlotta ; single ; Glacio ; Pistols
+Lumi ; single ; Electro ; Broadblade
+Camellya ; single ; Havoc ; Sword
+Youhu ; single ; Glacio ; Gauntlets
+Shorekeeper ; single ; Spectro ; Rectifier
+Xiangli Yao ; single ; Electro ; Gauntlets
+Zhezhi ; single ; Glacio ; Rectifier
+Changli ; single ; Fusion ; Sword
+Jinhsi ; single ; Spectro ; Broadblade
+Yinlin ; single ; Electro ; Rectifier
+Jiyan ; single ; Aero ; Broadblade
+Yuanwu ; single ; Electro ; Gauntlets
+Calcharo ; single ; Electro ; Broadblade
+Lingyang ; single ; Glacio ; Gauntlets
+Danjin ; single ; Havoc ; Sword
+Sanhua ; single ; Glacio ; Sword
+Jianxin ; single ; Aero ; Gauntlets
+Verina ; single ; Spectro ; Rectifier
+Mortefi ; single ; Fusion ; Pistols
+Encore ; single ; Fusion ; Rectifier
+Taoqi ; single ; Havoc ; Broadblade
+Aalto ; single ; Aero ; Pistols
+Baizhi ; single ; Glacio ; Rectifier
+Yangyang ; single ; Aero ; Sword
+Chixia ; single ; Fusion ; Pistols
+Rover (Female) ; element ; Spectro / Havoc / Aero / Electro ; Sword
+Rover (Male) ; element ; Spectro / Havoc / Aero / Electro ; Sword

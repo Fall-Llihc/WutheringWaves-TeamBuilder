@@ -1,15 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ELEMENTS, UNKNOWN_ID, WEAPON_TYPES, type Character } from '../lib/data';
 import { UNKNOWN_CHARACTER, useGame } from '../lib/game';
 import { useStore } from '../lib/store';
-import { Icon, Img, Modal } from './ui';
+import { ElementIcon, Icon, Img, Modal } from './ui';
 
 function SearchBox({ value, onChange, count }: { value: string; onChange: (v: string) => void; count: number }) {
   return (
     <div className="search">
       <Icon name="search" size={16} />
       <input autoFocus placeholder="Search" value={value} onChange={(e) => onChange(e.target.value)} />
-      <span className="search-count">{count} results</span>
+      <span className="search-count">{count}</span>
     </div>
   );
 }
@@ -20,24 +20,24 @@ function Chips<T extends string | number>({
   onChange,
   allLabel = 'All',
 }: {
-  options: Array<{ value: T; label: string; color?: string }>;
+  options: Array<{ value: T; label: string; icon?: ReactNode }>;
   value: T | null;
   onChange: (v: T | null) => void;
   allLabel?: string;
 }) {
   return (
     <div className="chips">
-      <button className={value === null ? 'chip on' : 'chip'} onClick={() => onChange(null)}>
+      <button className={value === null ? 'chip on' : 'chip'} aria-pressed={value === null} onClick={() => onChange(null)}>
         {allLabel}
       </button>
       {options.map((o) => (
         <button
           key={String(o.value)}
           className={value === o.value ? 'chip on' : 'chip'}
-          style={o.color ? ({ '--chip': o.color } as React.CSSProperties) : undefined}
+          aria-pressed={value === o.value}
           onClick={() => onChange(value === o.value ? null : o.value)}
         >
-          {o.color && <i className="chip-dot" />}
+          {o.icon}
           {o.label}
         </button>
       ))}
@@ -78,8 +78,14 @@ export function CharacterPicker({
     const all = Object.values(data?.characters ?? {});
     const term = q.trim().toLowerCase();
     return all
-      .filter((c) => (!term || c.name.toLowerCase().includes(term)) && (!el || c.element === el) && (!wt || c.weaponType === wt) && (!rar || c.rarity === rar))
-      .sort((a, b) => b.rarity - a.rarity || Number(b.id) - Number(a.id));
+      .filter(
+        (c) =>
+          (!term || c.name.toLowerCase().includes(term)) &&
+          (!el || c.elements.includes(el)) &&
+          (!wt || c.weaponType === wt) &&
+          (!rar || c.rarity === rar),
+      )
+      .sort((a, b) => a.order - b.order);
   }, [data, q, el, wt, rar]);
 
   const showUnknown = !q && !el && !wt && !rar;
@@ -97,7 +103,7 @@ export function CharacterPicker({
 
   return (
     <Modal
-      title={multi ? `Pick ${slots} characters (${picked.length}/${slots})` : 'Choose a character'}
+      title={multi ? `Pick up to ${slots} characters · ${picked.length}/${slots}` : 'Choose a character'}
       onClose={onClose}
       wide
       footer={
@@ -114,7 +120,7 @@ export function CharacterPicker({
       <SearchBox value={q} onChange={setQ} count={tiles.length} />
       <div className="filters">
         <Chips
-          options={Object.entries(ELEMENTS).map(([k, v]) => ({ value: Number(k), label: v.name, color: v.color }))}
+          options={Object.entries(ELEMENTS).map(([k, v]) => ({ value: Number(k), label: v.name, icon: <ElementIcon id={Number(k)} size={16} /> }))}
           value={el}
           onChange={setEl}
           allLabel="All elements"
@@ -136,14 +142,32 @@ export function CharacterPicker({
               key={c.id}
               className={`char-tile r${c.rarity} ${order >= 0 ? 'picked' : ''}`}
               disabled={inTeam}
-              title={inTeam ? 'Already in this team' : c.name}
-              style={{ '--el': ELEMENTS[c.element]?.color ?? '#888' } as React.CSSProperties}
+              title={inTeam ? 'Already in this team' : c.modes.length >= 2 && c.kind === 'dual' ? `${c.name} · ${c.modes.join(' / ')}` : c.name}
+              style={{ '--el': ELEMENTS[c.element]?.color ?? 'transparent' } as React.CSSProperties}
               onClick={() => choose(c)}
             >
-              {c.id === UNKNOWN_ID ? <span className="unknown-mark">?</span> : <Img src={c.portrait} alt="" className="char-tile-img" />}
-              {usage[c.id] ? <span className="use-count" title="Teams using this character">{usage[c.id]}</span> : null}
+              {c.id === UNKNOWN_ID ? (
+                <span className="unknown-mark">?</span>
+              ) : c.portrait ? (
+                <Img src={c.portrait} alt="" className="char-tile-img" />
+              ) : (
+                <span className="unknown-mark initial">{c.name.slice(0, 1)}</span>
+              )}
+              {usage[c.id] ? (
+                <span className="use-count" title={`In ${usage[c.id]} team${usage[c.id] === 1 ? '' : 's'}`}>
+                  {usage[c.id]}
+                </span>
+              ) : null}
               {order >= 0 && <span className="pick-order">{order + 1}</span>}
-              <span className="char-tile-name">{c.name}</span>
+              <span className="char-tile-els">
+                {(c.kind === 'element' ? c.elements : [c.element]).map((e) => (
+                  <ElementIcon key={e} id={e} size={c.kind === 'element' ? 14 : 18} />
+                ))}
+              </span>
+              <span className="char-tile-name">
+                {c.name}
+                {c.kind === 'dual' && <small>Dual mode</small>}
+              </span>
             </button>
           );
         })}
@@ -189,7 +213,7 @@ export function WeaponPicker({
           ) : (
             <span />
           )}
-          <button className="btn ghost" onClick={() => onPick(null)}>
+          <button className="btn quiet" onClick={() => onPick(null)}>
             Clear weapon
           </button>
         </>
@@ -236,7 +260,7 @@ export function SonataPicker({ onPick, onClose }: { onPick: (id: string | null) 
       footer={
         <>
           <span />
-          <button className="btn ghost" onClick={() => onPick(null)}>
+          <button className="btn quiet" onClick={() => onPick(null)}>
             Clear Sonata
           </button>
         </>

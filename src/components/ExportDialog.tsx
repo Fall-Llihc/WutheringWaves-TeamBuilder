@@ -1,11 +1,11 @@
 import { toJpeg, toPng } from 'html-to-image';
 import { forwardRef, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ELEMENTS, UNKNOWN_ID } from '../lib/data';
+import { activeMode, ELEMENTS, slotElement, UNKNOWN_ID } from '../lib/data';
 import { buildPayload, downloadBlob, embedInJpg, embedInPng, timestamp } from '../lib/fileFormat';
-import { UNKNOWN_CHARACTER, useGame } from '../lib/game';
+import { lookupCharacter, modesOf, useGame } from '../lib/game';
 import { chunkByLayout, describeLayout, planLayout } from '../lib/layout';
 import { useStore, type ExportSettings, type Team } from '../lib/store';
-import { Icon, Img, Modal } from './ui';
+import { ElementIcon, Icon, Img, Modal } from './ui';
 
 const CELL_W = 660;
 const GAP = 24;
@@ -14,25 +14,30 @@ const GROUP_PAD = 23; // .x-group padding + border
 
 function ExportTeam({ team, settings }: { team: Team; settings: ExportSettings }) {
   const data = useGame((s) => s.data);
-  const modes = useGame((s) => s.modes);
+  const autoModes = useGame((s) => s.autoModes);
   return (
     <div className="x-team">
       {settings.showNames && <div className="x-team-name">{team.name || ' '}</div>}
       <div className="x-slots">
         {team.slots.map((s, i) => {
-          const c = s.charId === UNKNOWN_ID ? UNKNOWN_CHARACTER : s.charId ? data?.characters[s.charId] : null;
+          const c = lookupCharacter(data, s.charId);
           const w = s.weaponId ? data?.weapons[s.weaponId] : null;
           const so = s.sonataId ? data?.sonatas[s.sonataId] : null;
-          const m = s.charId ? modes[s.charId] : undefined;
-          const mode = m && m.length >= 2 ? (s.mode && m.includes(s.mode) ? s.mode : m[0]) : null;
+          const mode = activeMode(modesOf(c, autoModes), s.mode);
+          const element = c ? slotElement(c, mode) : 0;
           return (
-            <div key={i} className={`x-slot ${c ? `r${c.rarity}` : 'empty'}`} style={{ '--el': c ? ELEMENTS[c.element]?.color ?? '#7d8597' : '#2a2f3a' } as React.CSSProperties}>
+            <div key={i} className={`x-slot ${c ? `r${c.rarity}` : 'empty'}`} style={{ '--el': ELEMENTS[element]?.color ?? 'transparent' } as React.CSSProperties}>
               <div className="x-portrait">
-                {c && c.id !== UNKNOWN_ID && <Img src={c.portrait} alt="" eager />}
-                {c?.id === UNKNOWN_ID && <span className="unknown-mark">?</span>}
+                {c && c.portrait && <Img src={c.portrait} alt="" eager />}
+                {c && !c.portrait && <span className="unknown-mark">{c.id === UNKNOWN_ID ? '?' : c.name[0]}</span>}
                 {c && <span className={`x-badge seq tier-S${s.seq}`}>S{s.seq}</span>}
-                {mode && <span className="x-mode">{mode}</span>}
-                {c && <span className="x-name">{c.name}</span>}
+                {mode && c?.kind === 'dual' && <span className="x-mode">{mode}</span>}
+                {c && (
+                  <span className="x-name">
+                    {element ? <ElementIcon id={element} size={18} /> : null}
+                    <span>{c.name}</span>
+                  </span>
+                )}
               </div>
               <div className="x-gear">
                 <div className={`x-gear-tile ${w ? `r${w.rarity}` : 'none'}`}>
@@ -88,7 +93,10 @@ export const ExportSheet = forwardRef<HTMLDivElement, { teams: Team[]; settings:
           <div key={gi}>{grid}</div>
         );
       })}
-      <div className="x-foot">WuWa Team Builder</div>
+      <div className="x-foot">
+        <span>Wuthering Waves team sheet</span>
+        <img src="llihc-logo.png" alt="Llihc" className="x-logo" />
+      </div>
     </div>
   );
 });
@@ -150,7 +158,7 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
       await waitForImages(node);
       const opts = {
         pixelRatio,
-        backgroundColor: '#07080c',
+        backgroundColor: '#0f0e0e',
         cacheBust: false,
         // A missing picture shouldn't sink the whole export; it renders blank instead.
         imagePlaceholder: TRANSPARENT_PX,
@@ -188,7 +196,7 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
             {included.length} team{included.length === 1 ? '' : 's'} · layout {describeLayout(blocks) || '–'}
           </span>
           <button className="btn primary" disabled={busy || !included.length} onClick={doExport}>
-            <Icon name="download" size={16} /> {busy ? 'Rendering…' : `Download ${settings.format.toUpperCase()}`}
+            <Icon name="download" size={16} /> {busy ? 'Rendering' : `Download ${settings.format.toUpperCase()}`}
           </button>
         </>
       }
@@ -220,16 +228,20 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
             </button>
           </div>
         </div>
-        <label className="check">
-          <input type="checkbox" checked={settings.showNames} onChange={(e) => setSettings({ showNames: e.target.checked })} /> Team names
+        <label className="switch">
+          <input type="checkbox" checked={settings.showNames} onChange={(e) => setSettings({ showNames: e.target.checked })} />
+          <span className="switch-track" aria-hidden="true" />
+          <span>Team names</span>
         </label>
-        <label className="check">
-          <input type="checkbox" checked={settings.showNotes} onChange={(e) => setSettings({ showNotes: e.target.checked })} /> Notes
+        <label className="switch">
+          <input type="checkbox" checked={settings.showNotes} onChange={(e) => setSettings({ showNotes: e.target.checked })} />
+          <span className="switch-track" aria-hidden="true" />
+          <span>Notes</span>
         </label>
       </div>
       <p className="hint">
-        PNG keeps text and badges crisp and is the better choice for sharing; JPG is smaller. Both files remember their teams, so
-        you can import them back here. Untick “Export” on a team to leave it out.
+        PNG stays sharp; JPG is smaller. Both files carry the team data, so you can import them back here. Turn off Export on a
+        team to leave it out.
       </p>
       {included.length ? (
         <div className="preview-wrap" ref={wrapRef} style={{ height: sheetH * scale }}>
@@ -238,7 +250,7 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
           </div>
         </div>
       ) : (
-        <p className="empty-note">No teams are ticked for export.</p>
+        <p className="empty-note">No team is set to export. Turn on Export on at least one team.</p>
       )}
     </Modal>
   );

@@ -1,4 +1,22 @@
+import {
+  ArrowClockwiseIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CopyIcon,
+  DownloadSimpleIcon,
+  FloppyDiskIcon,
+  ImageIcon,
+  MagnifyingGlassIcon,
+  NotePencilIcon,
+  PlusIcon,
+  TrashIcon,
+  UploadSimpleIcon,
+  UsersThreeIcon,
+  XIcon,
+  type Icon as PhosphorIcon,
+} from '@phosphor-icons/react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { elementIcon } from '../lib/data';
 
 export function Modal({
   title,
@@ -110,31 +128,26 @@ export function LevelBadge({
   );
 }
 
-const PATHS: Record<string, string> = {
-  x: 'M6 6l12 12M18 6L6 18',
-  plus: 'M12 5v14M5 12h14',
-  up: 'M12 19V5M5 12l7-7 7 7',
-  down: 'M12 5v14M19 12l-7 7-7-7',
-  left: 'M19 12H5M12 19l-7-7 7-7',
-  right: 'M5 12h14M12 5l7 7-7 7',
-  copy: 'M9 9h10v10H9zM5 15V5h10',
-  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
-  users: 'M16 19v-1a4 4 0 00-4-4H7a4 4 0 00-4 4v1M9.5 10a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM21 19v-1a4 4 0 00-3-3.9M15 3.1a3.5 3.5 0 010 6.8',
-  image: 'M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4M15 9h.01',
-  upload: 'M12 16V4M7 9l5-5 5 5M4 20h16',
-  download: 'M12 4v12M7 11l5 5 5-5M4 20h16',
-  note: 'M5 4h14v16H5zM9 9h6M9 13h6M9 17h3',
-  grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
-  search: 'M11 18a7 7 0 100-14 7 7 0 000 14zM21 21l-5-5',
-  refresh: 'M20 11a8 8 0 10-2.3 5.7M20 4v7h-7',
-};
+const ICONS = {
+  x: XIcon,
+  plus: PlusIcon,
+  left: ArrowLeftIcon,
+  right: ArrowRightIcon,
+  copy: CopyIcon,
+  trash: TrashIcon,
+  users: UsersThreeIcon,
+  image: ImageIcon,
+  upload: UploadSimpleIcon,
+  download: DownloadSimpleIcon,
+  save: FloppyDiskIcon,
+  note: NotePencilIcon,
+  search: MagnifyingGlassIcon,
+  refresh: ArrowClockwiseIcon,
+} satisfies Record<string, PhosphorIcon>;
 
-export function Icon({ name, size = 18 }: { name: keyof typeof PATHS | string; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={PATHS[name] ?? ''} />
-    </svg>
-  );
+export function Icon({ name, size = 18 }: { name: keyof typeof ICONS; size?: number }) {
+  const C = ICONS[name];
+  return <C size={size} weight="regular" aria-hidden="true" />;
 }
 
 /** Image that hides itself when the source fails to load. */
@@ -164,5 +177,22 @@ export function Toast({ message, onDone }: { message: string; onDone: () => void
     <div className="toast" role="status">
       {message}
     </div>
+  );
+}
+
+export function ElementIcon({ id, size = 18, title }: { id: number; size?: number; title?: string }) {
+  const src = elementIcon(id);
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={title ?? ''}
+      title={title}
+      width={size}
+      height={size}
+      className="el-icon"
+      crossOrigin="anonymous"
+      draggable={false}
+    />
   );
 }

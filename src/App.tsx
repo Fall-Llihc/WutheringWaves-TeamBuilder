@@ -16,7 +16,7 @@ import { TeamCard, type PickerRequest } from './components/TeamCard';
 import { Icon, Img, Modal, Toast } from './components/ui';
 import { ELEMENTS, UNKNOWN_ID } from './lib/data';
 import { buildPayload, downloadBlob, parseImportFile, timestamp } from './lib/fileFormat';
-import { UNKNOWN_CHARACTER, useGame } from './lib/game';
+import { lookupCharacter, useGame } from './lib/game';
 import { useStore, type SlotRef, type Team } from './lib/store';
 
 export default function App() {
@@ -34,6 +34,13 @@ export default function App() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Saved or imported teams may hold outdated ids (per-element Rovers, roster-only names).
+  const remap = store.remapCharacters;
+  useEffect(() => {
+    if (!data) return;
+    remap((id) => (id === UNKNOWN_ID || data.characters[id] ? null : data.aliases[id] ?? null));
+  }, [data, teams, remap]);
 
   const notify = useCallback((m: string) => setToast(m), []);
 
@@ -54,7 +61,7 @@ export default function App() {
   };
 
   const dragSlot = dragFrom ? teams.find((t) => t.id === dragFrom.teamId)?.slots[dragFrom.index] : null;
-  const dragChar = dragSlot?.charId === UNKNOWN_ID ? UNKNOWN_CHARACTER : dragSlot?.charId ? data?.characters[dragSlot.charId] : null;
+  const dragChar = lookupCharacter(data, dragSlot?.charId ?? null);
 
   /* ---------------- pickers ---------------- */
 
@@ -65,7 +72,7 @@ export default function App() {
     if (!picker || !pickerTeam) return;
     if (picker.kind === 'char') {
       const id = ids[0];
-      const c = data?.characters[id];
+      const c = lookupCharacter(data, id);
       const prevWeapon = pickerSlot?.weaponId ? data?.weapons[pickerSlot.weaponId] : null;
       store.setCharacter(picker.ref, id, !!(c && prevWeapon && prevWeapon.type === c.weaponType));
     } else if (picker.kind === 'pick3') {
@@ -101,18 +108,19 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true" />
-          <div>
+          <img className="brand-logo" src="llihc-logo.png" alt="Llihc" width={64} height={40} />
+          <span className="brand-rule" aria-hidden="true" />
+          <div className="brand-text">
             <h1>Team Builder</h1>
-            <p>Wuthering Waves · {data ? `data v${data.version}` : 'loading data'}</p>
+            <p>Wuthering Waves{data ? <span className="mono"> · v{data.version}</span> : null}</p>
           </div>
         </div>
-        <nav className="actions" aria-label="Team actions">
-          <button className="btn" onClick={() => fileRef.current?.click()} title="Import teams from a .json file or an exported image">
+        <nav className="actions" aria-label="File">
+          <button className="btn quiet" onClick={() => fileRef.current?.click()} title="Import teams from a .json file or an exported image">
             <Icon name="upload" size={16} /> Import
           </button>
-          <button className="btn" onClick={saveJson} title="Save all teams as a .json file">
-            <Icon name="download" size={16} /> Save file
+          <button className="btn quiet" onClick={saveJson} title="Save all teams as a .json file">
+            <Icon name="save" size={16} /> Save
           </button>
           <button className="btn primary" onClick={() => setExportOpen(true)} disabled={!data}>
             <Icon name="image" size={16} /> Export image
@@ -131,19 +139,19 @@ export default function App() {
         <div className="workspace-head">
           <div>
             <h2>
-              {teams.length} team{teams.length === 1 ? '' : 's'}
+              Teams <span className="mono count">{teams.length}</span>
             </h2>
-            <p className="muted">
-              Drag a character onto another slot to move it there, or onto a filled slot to swap. {includedCount} ticked for export.
-            </p>
+            <p className="muted">Drag a character onto another slot to move it, or onto a filled one to swap.</p>
           </div>
           <div className="workspace-actions">
-            <button className="btn sm ghost" onClick={() => store.setAllIncluded(includedCount !== teams.length)}>
-              {includedCount === teams.length ? 'Untick all' : 'Tick all'}
+            <button className="link" onClick={() => store.setAllIncluded(includedCount !== teams.length)}>
+              {includedCount === teams.length ? 'Exclude all from export' : 'Include all in export'}
             </button>
+            <span className="mono muted">
+              {includedCount}/{teams.length} in export
+            </span>
             {confirmReset ? (
               <span className="confirm">
-                Clear every team?
                 <button
                   className="btn sm danger"
                   onClick={() => {
@@ -151,21 +159,21 @@ export default function App() {
                     setConfirmReset(false);
                   }}
                 >
-                  Clear
+                  Clear every team
                 </button>
-                <button className="btn sm ghost" onClick={() => setConfirmReset(false)}>
+                <button className="btn sm quiet" onClick={() => setConfirmReset(false)}>
                   Cancel
                 </button>
               </span>
             ) : (
-              <button className="btn sm danger-ghost" onClick={() => setConfirmReset(true)}>
+              <button className="btn sm quiet" onClick={() => setConfirmReset(true)}>
                 Reset
               </button>
             )}
           </div>
         </div>
 
-        {status === 'loading' && !data && <div className="banner">Loading character data…</div>}
+        {status === 'loading' && !data && <div className="banner">Loading character data</div>}
         {status === 'error' && (
           <div className="banner error">
             Couldn't load game data ({error}). Check the connection and
@@ -174,7 +182,7 @@ export default function App() {
             </button>
           </div>
         )}
-        {fromCache && status === 'ready' && <div className="banner subtle">Using saved game data.</div>}
+        {fromCache && status === 'ready' && <p className="cache-note mono">Offline copy of game data</p>}
 
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragFrom(null)}>
           <div className="teams">
@@ -182,14 +190,14 @@ export default function App() {
               <TeamCard key={t.id} team={t} index={i} total={teams.length} onPicker={setPicker} />
             ))}
             <button className="add-team" onClick={store.addTeam}>
-              <Icon name="plus" size={28} />
-              <span>Add team</span>
+              <Icon name="plus" size={22} />
+              <span>New team</span>
             </button>
           </div>
           <DragOverlay dropAnimation={null}>
             {dragChar ? (
-              <div className="drag-ghost" style={{ '--el': ELEMENTS[dragChar.element]?.color ?? '#888' } as React.CSSProperties}>
-                {dragChar.id === UNKNOWN_ID ? <span className="unknown-mark">?</span> : <Img src={dragChar.portrait} alt="" />}
+              <div className="drag-ghost" style={{ '--el': ELEMENTS[dragChar.element]?.color ?? 'transparent' } as React.CSSProperties}>
+                {dragChar.portrait ? <Img src={dragChar.portrait} alt="" /> : <span className="unknown-mark">{dragChar.id === UNKNOWN_ID ? '?' : dragChar.name[0]}</span>}
                 <span>{dragChar.name}</span>
               </div>
             ) : null}
@@ -198,11 +206,18 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        Game data and images from{' '}
-        <a href="https://ww.nanoka.cc/" target="_blank" rel="noreferrer">
-          nanoka.cc
-        </a>
-        . Wuthering Waves and its assets belong to Kuro Games. Fan-made, not affiliated.
+        <span>
+          Made by Llihc. Images from{' '}
+          <a href="https://ww.nanoka.cc/" target="_blank" rel="noreferrer">
+            nanoka.cc
+          </a>
+          , release order from{' '}
+          <a href="https://encore.moe/" target="_blank" rel="noreferrer">
+            encore.moe
+          </a>
+          .
+        </span>
+        <span>Wuthering Waves belongs to Kuro Games. Fan-made, not affiliated.</span>
       </footer>
 
       {picker && pickerTeam && (picker.kind === 'char' || picker.kind === 'pick3') && (
@@ -217,7 +232,7 @@ export default function App() {
       )}
       {picker?.kind === 'weapon' && pickerSlot && (
         <WeaponPicker
-          weaponType={pickerSlot.charId && pickerSlot.charId !== UNKNOWN_ID ? data?.characters[pickerSlot.charId]?.weaponType ?? 0 : 0}
+          weaponType={lookupCharacter(data, pickerSlot.charId)?.weaponType ?? 0}
           onPick={(id) => {
             store.updateSlot(picker.ref, { weaponId: id, ...(id !== pickerSlot.weaponId ? { rank: 1 } : {}) });
             setPicker(null);
@@ -243,12 +258,12 @@ export default function App() {
           onClose={() => setPendingImport(null)}
           footer={
             <>
-              <button className="btn ghost" onClick={() => setPendingImport(null)}>
+              <button className="btn quiet" onClick={() => setPendingImport(null)}>
                 Cancel
               </button>
               <span className="row-gap">
                 <button
-                  className="btn"
+                  className="btn quiet"
                   onClick={() => {
                     store.importTeams(pendingImport, 'append');
                     notify(`Added ${pendingImport.length} teams.`);
@@ -277,7 +292,7 @@ export default function App() {
                 <strong>{t.name}</strong>
                 <span className="muted">
                   {t.slots
-                    .map((s) => (s.charId === UNKNOWN_ID ? 'TBA' : s.charId ? data?.characters[s.charId]?.name ?? 'Unknown' : '—'))
+                    .map((s) => (s.charId === UNKNOWN_ID ? 'TBA' : s.charId ? lookupCharacter(data, s.charId)?.name ?? 'Unknown' : 'Empty'))
                     .join(' · ')}
                 </span>
               </li>

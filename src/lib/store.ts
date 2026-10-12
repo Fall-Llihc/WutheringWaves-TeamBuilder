@@ -92,6 +92,8 @@ interface State {
   /** Drag and drop: swaps when the target holds a character, otherwise moves. */
   dropSlot: (from: SlotRef, to: SlotRef) => string | null;
   setAllIncluded: (v: boolean) => void;
+  /** Rewrites outdated character ids (old per-element Rover ids, roster-only ids) to current ones. */
+  remapCharacters: (resolve: (id: string) => { id: string; mode?: string } | null) => void;
   importTeams: (teams: Team[], mode: 'replace' | 'append') => void;
   resetAll: () => void;
   setExportSettings: (patch: Partial<ExportSettings>) => void;
@@ -191,6 +193,21 @@ export const useStore = create<State>()(
         });
         return null;
       },
+
+      remapCharacters: (resolve) =>
+        set((st) => {
+          let changed = false;
+          const teams = st.teams.map((t) => {
+            const slots = t.slots.map((s) => {
+              const hit = s.charId ? resolve(s.charId) : null;
+              if (!hit) return s;
+              changed = true;
+              return { ...s, charId: hit.id, mode: hit.mode ?? s.mode };
+            }) as Team['slots'];
+            return { ...t, slots };
+          });
+          return changed ? { teams } : st;
+        }),
 
       setAllIncluded: (v) => set((st) => ({ teams: st.teams.map((t) => ({ ...t, include: v })) })),
 

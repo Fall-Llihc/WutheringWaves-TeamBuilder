@@ -1,12 +1,13 @@
 import { create } from 'zustand';
-import { fetchModes, getCachedModes, loadGameData, UNKNOWN_ID, type Character, type GameData } from './data';
+import { fetchModes, findCharacter, getCachedModes, loadGameData, UNKNOWN_ID, type Character, type GameData } from './data';
 
 interface GameState {
   data: GameData | null;
   status: 'loading' | 'ready' | 'error';
   error: string | null;
   fromCache: boolean;
-  modes: Record<string, string[]>;
+  /** Auto-detected modes for characters the roster file doesn't list. */
+  autoModes: Record<string, string[]>;
   load: () => Promise<void>;
   ensureModes: (charId: string | null) => void;
 }
@@ -16,7 +17,7 @@ export const useGame = create<GameState>()((set, get) => ({
   status: 'loading',
   error: null,
   fromCache: false,
-  modes: {},
+  autoModes: {},
 
   load: async () => {
     set({ status: 'loading', error: null });
@@ -29,13 +30,13 @@ export const useGame = create<GameState>()((set, get) => ({
   },
 
   ensureModes: (charId) => {
-    if (!charId || charId === UNKNOWN_ID) return;
-    const { modes, data } = get();
-    if (modes[charId]) return;
-    const cached = getCachedModes(charId);
-    if (cached) set((st) => ({ modes: { ...st.modes, [charId]: cached } }));
+    const { autoModes, data } = get();
+    const c = findCharacter(data, charId);
+    if (!c || c.listed || autoModes[c.id]) return;
+    const cached = getCachedModes(c.id);
+    if (cached) return set((st) => ({ autoModes: { ...st.autoModes, [c.id]: cached } }));
     if (!data) return;
-    fetchModes(charId, data.version).then((m) => set((st) => ({ modes: { ...st.modes, [charId]: m } })));
+    fetchModes(c.id, data.version).then((m) => set((st) => ({ autoModes: { ...st.autoModes, [c.id]: m } })));
   },
 }));
 
@@ -44,14 +45,30 @@ export const UNKNOWN_CHARACTER: Character = {
   name: 'Unknown / TBA',
   rarity: 5,
   element: 0,
+  elements: [],
   weaponType: 0,
   icon: '',
   portrait: '',
+  order: -1e6,
+  kind: 'single',
+  modes: [],
+  listed: true,
 };
+
+export function lookupCharacter(data: GameData | null, id: string | null): Character | null {
+  if (!id) return null;
+  if (id === UNKNOWN_ID) return UNKNOWN_CHARACTER;
+  return findCharacter(data, id);
+}
 
 export function useCharacter(id: string | null): Character | null {
   const data = useGame((s) => s.data);
-  if (!id) return null;
-  if (id === UNKNOWN_ID) return UNKNOWN_CHARACTER;
-  return data?.characters[id] ?? null;
+  return lookupCharacter(data, id);
+}
+
+/** Modes a character can switch between (dual modes or elements). */
+export function modesOf(c: Character | null, autoModes: Record<string, string[]>): string[] {
+  if (!c) return [];
+  if (c.modes.length >= 2) return c.modes;
+  return c.listed ? [] : autoModes[c.id] ?? [];
 }
