@@ -702,20 +702,15 @@ main {
   border-color: transparent;
 }
 .level-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  position: fixed;
   z-index: var(--z-pop);
+  max-width: calc(100vw - 16px);
   padding: 8px;
   border-radius: 10px;
   border: 1px solid var(--line-2);
   background: var(--surface-2);
   box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.8);
   animation: pop 0.16s var(--ease) both;
-}
-.level.rank .level-pop {
-  left: auto;
-  right: 0;
 }
 .level-pop-label {
   display: block;
@@ -725,6 +720,7 @@ main {
 }
 .level-pop-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 3px;
 }
 .level-pop-row button {

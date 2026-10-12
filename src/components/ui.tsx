@@ -15,7 +15,8 @@ import {
   XIcon,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { elementIcon } from '../lib/data';
 
 export function Modal({
@@ -76,21 +77,63 @@ export function LevelBadge({
   title: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const badgeRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const close = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !popRef.current?.contains(t)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
     window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [open]);
+
+  // The popover lives in a portal (slot cards clip overflow), so place it against
+  // the viewport: below the badge, flipped above when short on room, clamped to edges.
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const badge = badgeRef.current?.getBoundingClientRect();
+      const pop = popRef.current;
+      if (!badge || !pop) return;
+      const gap = 6;
+      const edge = 8;
+      const { width, height } = pop.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      const vh = window.innerHeight;
+      let top = badge.bottom + gap;
+      if (top + height > vh - edge && badge.top - gap - height >= edge) top = badge.top - gap - height;
+      const alignRight = className.includes('rank');
+      let left = alignRight ? badge.right - width : badge.left;
+      left = Math.min(Math.max(left, edge), vw - width - edge);
+      setPos({ top, left });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, className]);
 
   const values = Array.from({ length: max - min + 1 }, (_, i) => min + i);
   return (
     <div className={`level ${className}`} ref={ref} onPointerDown={(e) => e.stopPropagation()}>
       <button
+        ref={badgeRef}
         type="button"
         className={`level-badge tier-${prefix}${value}`}
         onClick={(e) => {
@@ -103,8 +146,16 @@ export function LevelBadge({
         {prefix}
         {value}
       </button>
-      {open && (
-        <div className="level-pop" role="listbox" aria-label={title}>
+      {open &&
+        createPortal(
+        <div
+          ref={popRef}
+          className="level-pop"
+          role="listbox"
+          aria-label={title}
+          style={pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, visibility: 'hidden' }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           <span className="level-pop-label">{title}</span>
           <div className="level-pop-row">
             {values.map((v) => (
@@ -122,7 +173,8 @@ export function LevelBadge({
               </button>
             ))}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
