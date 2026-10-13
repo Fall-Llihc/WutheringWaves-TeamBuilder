@@ -3,6 +3,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CopyIcon,
+  DotsSixVerticalIcon,
   DownloadSimpleIcon,
   FloppyDiskIcon,
   ImageIcon,
@@ -186,6 +187,7 @@ const ICONS = {
   left: ArrowLeftIcon,
   right: ArrowRightIcon,
   copy: CopyIcon,
+  grip: DotsSixVerticalIcon,
   trash: TrashIcon,
   users: UsersThreeIcon,
   image: ImageIcon,
@@ -214,6 +216,7 @@ export function Img({ src, alt, className, eager }: { src: string; alt: string; 
       className={className}
       crossOrigin="anonymous"
       loading={eager ? 'eager' : 'lazy'}
+      decoding="async"
       draggable={false}
       onError={() => setFailed(true)}
     />

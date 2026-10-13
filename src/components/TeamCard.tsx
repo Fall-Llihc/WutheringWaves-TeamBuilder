@@ -1,8 +1,8 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { activeMode, ELEMENTS, elementByName, slotElement, UNKNOWN_ID, type Character } from '../lib/data';
 import { modesOf, useCharacter, useGame } from '../lib/game';
-import { useStore, type Slot, type SlotRef, type Team } from '../lib/store';
+import { useStore, type Slot, type SlotRef, type Team, type TeamDropMode } from '../lib/store';
 import { ElementIcon, Icon, Img, LevelBadge } from './ui';
 
 export type PickerRequest =
@@ -12,6 +12,9 @@ export type PickerRequest =
   | { kind: 'sonata'; ref: SlotRef };
 
 export const slotKey = (r: SlotRef) => `${r.teamId}:${r.index}`;
+
+/** Drag payloads; collision detection keeps slot drags on slots and team drags on teams. */
+export type DragData = ({ type: 'slot' } & SlotRef) | { type: 'team'; teamId: string };
 
 export function ModeToggle({
   char,
@@ -62,8 +65,8 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
 
   useEffect(() => ensureModes(slot.charId), [slot.charId, ensureModes, data]);
 
-  const drag = useDraggable({ id, data: ref, disabled: !slot.charId });
-  const drop = useDroppable({ id, data: ref });
+  const drag = useDraggable({ id, data: { type: 'slot', ...ref } satisfies DragData, disabled: !slot.charId });
+  const drop = useDroppable({ id, data: { type: 'slot', ...ref } satisfies DragData });
 
   const weapon = slot.weaponId ? data?.weapons[slot.weaponId] : null;
   const sonata = slot.sonataId ? data?.sonatas[slot.sonataId] : null;
@@ -167,28 +170,47 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
   );
 }
 
-export function TeamCard({
+export const TeamCard = memo(function TeamCard({
   team,
   index,
   total,
   onPicker,
+  dropMode,
 }: {
   team: Team;
   index: number;
   total: number;
   onPicker: (r: PickerRequest) => void;
+  /** Where a dragged team would land relative to this one, while hovering it. */
+  dropMode: TeamDropMode | null;
 }) {
-  const { updateTeam, moveTeam, duplicateTeam, removeTeam } = useStore();
+  const { updateTeam, moveTeam, duplicateTeam, removeTeam } = useStore.getState();
   const [notesOpen, setNotesOpen] = useState(!!team.notes);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const hasEmpty = team.slots.some((s) => !s.charId);
+  const data: DragData = { type: 'team', teamId: team.id };
+  const drag = useDraggable({ id: `team:${team.id}`, data });
+  const drop = useDroppable({ id: `team-drop:${team.id}`, data });
 
   return (
-    <section className={`team ${team.include ? '' : 'excluded'}`} aria-label={team.name}>
+    <section
+      ref={drop.setNodeRef}
+      className={`team ${team.include ? '' : 'excluded'} ${drag.isDragging ? 'dragging' : ''} ${dropMode ? `drop-${dropMode}` : ''}`}
+      aria-label={team.name}
+    >
       <header className="team-head">
-        <span className="team-index" aria-label={`Team ${index + 1} of ${total}`}>
-          {String(index + 1).padStart(2, '0')}
-        </span>
+        <button
+          ref={drag.setNodeRef}
+          {...drag.attributes}
+          {...drag.listeners}
+          type="button"
+          className="team-grip"
+          aria-label={`Team ${index + 1} of ${total}. Drag to reorder: drop in the middle of a team to swap, on its left or right edge to place before or after it`}
+          title="Drag to reorder. Middle of a team: swap. Left or right edge: place before or after."
+        >
+          <Icon name="grip" size={16} />
+          <span className="team-index">{String(index + 1).padStart(2, '0')}</span>
+        </button>
         <input
           className="team-name"
           value={team.name}
@@ -262,4 +284,4 @@ export function TeamCard({
       </footer>
     </section>
   );
-}
+});

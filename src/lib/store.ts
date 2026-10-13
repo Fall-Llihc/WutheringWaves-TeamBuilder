@@ -28,6 +28,8 @@ export interface SlotRef {
   index: number;
 }
 
+export type TeamDropMode = 'swap' | 'before' | 'after';
+
 export type ExportFormat = 'png' | 'jpg';
 
 export interface ExportSettings {
@@ -84,6 +86,8 @@ interface State {
   removeTeam: (id: string) => void;
   duplicateTeam: (id: string) => void;
   moveTeam: (id: string, dir: -1 | 1) => void;
+  /** Drag and drop of whole teams: swap places, or insert before/after the target. */
+  reorderTeam: (fromId: string, toId: string, mode: TeamDropMode) => void;
   updateTeam: (id: string, patch: Partial<Omit<Team, 'id' | 'slots'>>) => void;
   updateSlot: (ref: SlotRef, patch: Partial<Slot>) => void;
   /** Places a character; clears weapon if the new character can't use it. */
@@ -142,6 +146,22 @@ export const useStore = create<State>()(
           if (i < 0 || j < 0 || j >= st.teams.length) return st;
           const teams = [...st.teams];
           [teams[i], teams[j]] = [teams[j], teams[i]];
+          return { teams };
+        }),
+
+      reorderTeam: (fromId, toId, mode) =>
+        set((st) => {
+          const i = st.teams.findIndex((t) => t.id === fromId);
+          const j = st.teams.findIndex((t) => t.id === toId);
+          if (i < 0 || j < 0 || i === j) return st;
+          const teams = [...st.teams];
+          if (mode === 'swap') {
+            [teams[i], teams[j]] = [teams[j], teams[i]];
+            return { teams };
+          }
+          const [moved] = teams.splice(i, 1);
+          const at = teams.findIndex((t) => t.id === toId) + (mode === 'after' ? 1 : 0);
+          teams.splice(at, 0, moved);
           return { teams };
         }),
 

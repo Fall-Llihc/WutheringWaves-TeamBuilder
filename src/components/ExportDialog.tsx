@@ -1,6 +1,7 @@
 import { toJpeg, toPng } from 'html-to-image';
-import { forwardRef, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activeMode, ELEMENTS, slotElement, UNKNOWN_ID } from '../lib/data';
+import { canvasToBlob, fileSafe, renderCharacterCard } from '../lib/characterCard';
 import { buildPayload, downloadBlob, embedInJpg, embedInPng, timestamp } from '../lib/fileFormat';
 import { lookupCharacter, modesOf, useGame } from '../lib/game';
 import { chunkByLayout, describeLayout, planLayout } from '../lib/layout';
@@ -122,8 +123,23 @@ function dataUrlToBytes(url: string) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
+interface CharCard {
+  name: string;
+  url: string;
+  canvas: HTMLCanvasElement;
+}
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export function ExportDialog({ onClose, notify }: { onClose: () => void; notify: (m: string) => void }) {
   const teams = useStore((s) => s.teams);
+  const data = useGame((s) => s.data);
+  const [mode, setMode] = useState<'sheet' | 'chars'>('sheet');
+  const [charTeamId, setCharTeamId] = useState(() => (teams.find((t) => t.include) ?? teams[0])?.id);
+  const charTeam = teams.find((t) => t.id === charTeamId) ?? teams[0];
+  const [cards, setCards] = useState<CharCard[]>([]);
+  const [noArt, setNoArt] = useState(0);
+  const [rendering, setRendering] = useState(false);
   const settings = useStore((s) => s.exportSettings);
   const setSettings = useStore((s) => s.setExportSettings);
   const included = teams.filter((t) => t.include);
@@ -150,6 +166,52 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
     return () => ro.disconnect();
   }, [included.length, settings]);
 
+  // Per-character cards re-render whenever the chosen team changes.
+  useEffect(() => {
+    if (mode !== 'chars' || !charTeam || !data) return;
+    let cancelled = false;
+    setRendering(true);
+    (async () => {
+      const out: CharCard[] = [];
+      let missing = 0;
+      for (const s of charTeam.slots) {
+        const char = lookupCharacter(data, s.charId);
+        if (!char) continue;
+        const weapon = s.weaponId ? data.weapons[s.weaponId] ?? null : null;
+        const canvas = await renderCharacterCard({ char, seq: s.seq, weapon, rank: s.rank });
+        if (!canvas) {
+          missing++;
+          continue;
+        }
+        out.push({ name: char.name, url: canvas.toDataURL('image/png'), canvas });
+      }
+      if (cancelled) return;
+      setCards(out);
+      setNoArt(missing);
+      setRendering(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, charTeam, data]);
+
+  const doCharExport = async () => {
+    if (!charTeam || !cards.length) return;
+    setBusy(true);
+    try {
+      for (const [i, c] of cards.entries()) {
+        downloadBlob(await canvasToBlob(c.canvas), `${fileSafe(charTeam.name)}-${i + 1}-${fileSafe(c.name)}.png`);
+        // Browsers drop rapid back-to-back downloads; space them out.
+        if (i < cards.length - 1) await pause(400);
+      }
+      notify(`Exported ${cards.length} character image${cards.length === 1 ? '' : 's'}.`);
+    } catch (e) {
+      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doExport = async () => {
     const node = sheetRef.current;
     if (!node || !included.length) return;
@@ -158,7 +220,7 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
       await waitForImages(node);
       const opts = {
         pixelRatio,
-        backgroundColor: '#0f0e0e',
+        backgroundColor: '#efe8e2',
         cacheBust: false,
         // A missing picture shouldn't sink the whole export; it renders blank instead.
         imagePlaceholder: TRANSPARENT_PX,
@@ -191,66 +253,124 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
       onClose={onClose}
       wide
       footer={
-        <>
-          <span className="muted">
-            {included.length} team{included.length === 1 ? '' : 's'} · layout {describeLayout(blocks) || '–'}
-          </span>
-          <button className="btn primary" disabled={busy || !included.length} onClick={doExport}>
-            <Icon name="download" size={16} /> {busy ? 'Rendering' : `Download ${settings.format.toUpperCase()}`}
-          </button>
-        </>
+        mode === 'sheet' ? (
+          <>
+            <span className="muted">
+              {included.length} team{included.length === 1 ? '' : 's'} · layout {describeLayout(blocks) || '–'}
+            </span>
+            <button className="btn primary" disabled={busy || !included.length} onClick={doExport}>
+              <Icon name="download" size={16} /> {busy ? 'Rendering' : `Download ${settings.format.toUpperCase()}`}
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="muted">
+              {cards.length} character{cards.length === 1 ? '' : 's'}
+              {noArt ? ` · ${noArt} without art skipped` : ''}
+            </span>
+            <button className="btn primary" disabled={busy || rendering || !cards.length} onClick={doCharExport}>
+              <Icon name="download" size={16} />{' '}
+              {busy ? 'Saving' : cards.length > 1 ? `Download ${cards.length} PNGs` : 'Download PNG'}
+            </button>
+          </>
+        )
       }
     >
-      <div className="export-opts">
-        <label className="field">
-          <span>Title (optional)</span>
-          <input value={settings.title} maxLength={80} placeholder="e.g. Tower of Adversity teams" onChange={(e) => setSettings({ title: e.target.value })} />
-        </label>
-        <div className="field">
-          <span>Format</span>
-          <div className="seg">
-            <button className={settings.format === 'png' ? 'on' : ''} onClick={() => setSettings({ format: 'png' })}>
-              PNG
-            </button>
-            <button className={settings.format === 'jpg' ? 'on' : ''} onClick={() => setSettings({ format: 'jpg' })}>
-              JPG
-            </button>
-          </div>
+      <div className="export-mode">
+        <div className="seg" role="tablist" aria-label="Export type">
+          <button role="tab" aria-selected={mode === 'sheet'} className={mode === 'sheet' ? 'on' : ''} onClick={() => setMode('sheet')}>
+            Team sheet
+          </button>
+          <button role="tab" aria-selected={mode === 'chars'} className={mode === 'chars' ? 'on' : ''} onClick={() => setMode('chars')}>
+            Per character
+          </button>
         </div>
-        <div className="field">
-          <span>Resolution</span>
-          <div className="seg">
-            <button className={pixelRatio === 1 ? 'on' : ''} onClick={() => setPixelRatio(1)}>
-              1x
-            </button>
-            <button className={pixelRatio === 2 ? 'on' : ''} onClick={() => setPixelRatio(2)}>
-              2x
-            </button>
-          </div>
-        </div>
-        <label className="switch">
-          <input type="checkbox" checked={settings.showNames} onChange={(e) => setSettings({ showNames: e.target.checked })} />
-          <span className="switch-track" aria-hidden="true" />
-          <span>Team names</span>
-        </label>
-        <label className="switch">
-          <input type="checkbox" checked={settings.showNotes} onChange={(e) => setSettings({ showNotes: e.target.checked })} />
-          <span className="switch-track" aria-hidden="true" />
-          <span>Notes</span>
-        </label>
       </div>
-      <p className="hint">
-        PNG stays sharp; JPG is smaller. Both files carry the team data, so you can import them back here. Turn off Export on a
-        team to leave it out.
-      </p>
-      {included.length ? (
-        <div className="preview-wrap" ref={wrapRef} style={{ height: sheetH * scale }}>
-          <div className="preview-scale" style={{ transform: `scale(${scale})` }}>
-            <ExportSheet ref={sheetRef} teams={included} settings={settings} />
+      {mode === 'chars' ? (
+        <>
+          <div className="export-opts">
+            <label className="field">
+              <span>Team</span>
+              <select value={charTeam?.id} onChange={(e) => setCharTeamId(e.target.value)}>
+                {teams.map((t, i) => (
+                  <option key={t.id} value={t.id}>
+                    {String(i + 1).padStart(2, '0')} · {t.name || 'Untitled team'}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        </div>
+          <p className="hint">
+            One transparent PNG per character: full art with Sequence, weapon and weapon rank. Characters without art (TBA or not
+            yet in the game data) are skipped.
+          </p>
+          {cards.length ? (
+            <div className={`char-cards ${rendering ? 'rendering' : ''}`}>
+              {cards.map((c, i) => (
+                <figure key={i} className="char-card">
+                  <img src={c.url} alt={`${c.name} export preview`} />
+                  <figcaption>{c.name}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-note">{rendering ? 'Rendering' : 'This team has no characters with art yet.'}</p>
+          )}
+        </>
       ) : (
-        <p className="empty-note">No team is set to export. Turn on Export on at least one team.</p>
+        <>
+          <div className="export-opts">
+            <label className="field">
+              <span>Title (optional)</span>
+              <input value={settings.title} maxLength={80} placeholder="e.g. Tower of Adversity teams" onChange={(e) => setSettings({ title: e.target.value })} />
+            </label>
+            <div className="field">
+              <span>Format</span>
+              <div className="seg">
+                <button className={settings.format === 'png' ? 'on' : ''} onClick={() => setSettings({ format: 'png' })}>
+                  PNG
+                </button>
+                <button className={settings.format === 'jpg' ? 'on' : ''} onClick={() => setSettings({ format: 'jpg' })}>
+                  JPG
+                </button>
+              </div>
+            </div>
+            <div className="field">
+              <span>Resolution</span>
+              <div className="seg">
+                <button className={pixelRatio === 1 ? 'on' : ''} onClick={() => setPixelRatio(1)}>
+                  1x
+                </button>
+                <button className={pixelRatio === 2 ? 'on' : ''} onClick={() => setPixelRatio(2)}>
+                  2x
+                </button>
+              </div>
+            </div>
+            <label className="switch">
+              <input type="checkbox" checked={settings.showNames} onChange={(e) => setSettings({ showNames: e.target.checked })} />
+              <span className="switch-track" aria-hidden="true" />
+              <span>Team names</span>
+            </label>
+            <label className="switch">
+              <input type="checkbox" checked={settings.showNotes} onChange={(e) => setSettings({ showNotes: e.target.checked })} />
+              <span className="switch-track" aria-hidden="true" />
+              <span>Notes</span>
+            </label>
+          </div>
+          <p className="hint">
+            PNG stays sharp; JPG is smaller. Both files carry the team data, so you can import them back here. Turn off Export on a
+            team to leave it out.
+          </p>
+          {included.length ? (
+            <div className="preview-wrap" ref={wrapRef} style={{ height: sheetH * scale }}>
+              <div className="preview-scale" style={{ transform: `scale(${scale})` }}>
+                <ExportSheet ref={sheetRef} teams={included} settings={settings} />
+              </div>
+            </div>
+          ) : (
+            <p className="empty-note">No team is set to export. Turn on Export on at least one team.</p>
+          )}
+        </>
       )}
     </Modal>
   );

@@ -4,31 +4,74 @@ import {
   KeyboardSensor,
   PointerSensor,
   TouchSensor,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ExportDialog } from './components/ExportDialog';
-import { CharacterPicker, SonataPicker, WeaponPicker } from './components/Pickers';
-import { TeamCard, type PickerRequest } from './components/TeamCard';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Aurora } from './components/Aurora';
+import { TeamCard, type DragData, type PickerRequest } from './components/TeamCard';
 import { Icon, Img, Modal, Toast } from './components/ui';
 import { ELEMENTS, UNKNOWN_ID } from './lib/data';
 import { buildPayload, downloadBlob, parseImportFile, timestamp } from './lib/fileFormat';
 import { lookupCharacter, useGame } from './lib/game';
-import { useStore, type SlotRef, type Team } from './lib/store';
+import { useStore, type SlotRef, type Team, type TeamDropMode } from './lib/store';
+
+// Dialogs load on first open; the export one pulls in html-to-image.
+const ExportDialog = lazy(() => import('./components/ExportDialog').then((m) => ({ default: m.ExportDialog })));
+const CharacterPicker = lazy(() => import('./components/Pickers').then((m) => ({ default: m.CharacterPicker })));
+const WeaponPicker = lazy(() => import('./components/Pickers').then((m) => ({ default: m.WeaponPicker })));
+const SonataPicker = lazy(() => import('./components/Pickers').then((m) => ({ default: m.SonataPicker })));
+
+// Slots only collide with slots and teams with teams. Teams use the pointer so
+// the left/right edge of a card can be targeted precisely.
+const collision: CollisionDetection = (args) => {
+  const type = (args.active.data.current as DragData | undefined)?.type;
+  const droppableContainers = args.droppableContainers.filter((c) => (c.data.current as DragData | undefined)?.type === type);
+  return type === 'team' ? pointerWithin({ ...args, droppableContainers }) : rectIntersection({ ...args, droppableContainers });
+};
+
+/** Pointer position where a drag started; keyboard drags have none. */
+function startPoint(e: Event | null): { x: number; y: number } | null {
+  if (!e) return null;
+  if ('touches' in e) {
+    const t = (e as TouchEvent).touches[0] ?? (e as TouchEvent).changedTouches[0];
+    return t ? { x: t.clientX, y: t.clientY } : null;
+  }
+  if ('clientX' in e) return { x: (e as PointerEvent).clientX, y: (e as PointerEvent).clientY };
+  return null;
+}
+
+/** Middle of a team swaps; its outer quarter on either side inserts before/after. */
+function teamDropMode(e: DragMoveEvent | DragEndEvent): TeamDropMode | null {
+  const over = e.over;
+  if (!over) return null;
+  const start = startPoint(e.activatorEvent);
+  const box = e.active.rect.current.translated;
+  const x = start ? start.x + e.delta.x : box ? box.left + box.width / 2 : null;
+  if (x === null) return 'swap';
+  const rel = (x - over.rect.left) / over.rect.width;
+  return rel < 0.25 ? 'before' : rel > 0.75 ? 'after' : 'swap';
+}
 
 export default function App() {
   const { status, error, data, load, fromCache } = useGame();
   const teams = useStore((s) => s.teams);
-  const store = useStore();
+  // Actions never change; reading them without subscribing avoids re-rendering on every edit.
+  const store = useStore.getState();
   const [picker, setPicker] = useState<PickerRequest | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [pendingImport, setPendingImport] = useState<Team[] | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [dragFrom, setDragFrom] = useState<SlotRef | null>(null);
+  const [dragTeamId, setDragTeamId] = useState<string | null>(null);
+  const [teamDrop, setTeamDrop] = useState<{ teamId: string; mode: TeamDropMode } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -50,15 +93,42 @@ export default function App() {
     useSensor(KeyboardSensor),
   );
 
-  const onDragStart = (e: DragStartEvent) => setDragFrom(e.active.data.current as SlotRef);
-  const onDragEnd = (e: DragEndEvent) => {
+  const resetDrag = () => {
     setDragFrom(null);
-    const from = e.active.data.current as SlotRef | undefined;
-    const to = e.over?.data.current as SlotRef | undefined;
-    if (!from || !to) return;
-    const err = store.dropSlot(from, to);
-    if (err) notify(err);
+    setDragTeamId(null);
+    setTeamDrop(null);
   };
+  const onDragStart = (e: DragStartEvent) => {
+    const d = e.active.data.current as DragData;
+    if (d.type === 'team') setDragTeamId(d.teamId);
+    else setDragFrom(d);
+  };
+  const onDragMove = (e: DragMoveEvent) => {
+    const from = e.active.data.current as DragData;
+    const to = e.over?.data.current as DragData | undefined;
+    if (from.type !== 'team' || to?.type !== 'team' || to.teamId === from.teamId) {
+      if (teamDrop) setTeamDrop(null);
+      return;
+    }
+    const mode = teamDropMode(e);
+    if (mode && (teamDrop?.teamId !== to.teamId || teamDrop.mode !== mode)) setTeamDrop({ teamId: to.teamId, mode });
+  };
+  const onDragEnd = (e: DragEndEvent) => {
+    resetDrag();
+    const from = e.active.data.current as DragData | undefined;
+    const to = e.over?.data.current as DragData | undefined;
+    if (!from || !to || from.type !== to.type) return;
+    if (from.type === 'team' && to.type === 'team') {
+      const mode = teamDropMode(e);
+      if (mode) store.reorderTeam(from.teamId, to.teamId, mode);
+      return;
+    }
+    if (from.type === 'slot' && to.type === 'slot') {
+      const err = store.dropSlot(from, to);
+      if (err) notify(err);
+    }
+  };
+  const dragTeam = dragTeamId ? teams.find((t) => t.id === dragTeamId) : null;
 
   const dragSlot = dragFrom ? teams.find((t) => t.id === dragFrom.teamId)?.slots[dragFrom.index] : null;
   const dragChar = lookupCharacter(data, dragSlot?.charId ?? null);
@@ -105,6 +175,8 @@ export default function App() {
   const includedCount = teams.filter((t) => t.include).length;
 
   return (
+    <>
+    <Aurora />
     <div className="app">
       <header className="topbar">
         <div className="brand">
@@ -141,7 +213,7 @@ export default function App() {
             <h2>
               Teams <span className="mono count">{teams.length}</span>
             </h2>
-            <p className="muted">Drag a character onto another slot to move it, or onto a filled one to swap.</p>
+            <p className="muted">Drag a character onto another slot to move or swap it. Drag a team by its number: drop in the middle of another team to swap, on its edge to place before or after.</p>
           </div>
           <div className="workspace-actions">
             <button className="link" onClick={() => store.setAllIncluded(includedCount !== teams.length)}>
@@ -184,10 +256,24 @@ export default function App() {
         )}
         {fromCache && status === 'ready' && <p className="cache-note mono">Offline copy of game data</p>}
 
-        <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragFrom(null)}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collision}
+          onDragStart={onDragStart}
+          onDragMove={onDragMove}
+          onDragEnd={onDragEnd}
+          onDragCancel={resetDrag}
+        >
           <div className="teams">
             {teams.map((t, i) => (
-              <TeamCard key={t.id} team={t} index={i} total={teams.length} onPicker={setPicker} />
+              <TeamCard
+                key={t.id}
+                team={t}
+                index={i}
+                total={teams.length}
+                onPicker={setPicker}
+                dropMode={teamDrop?.teamId === t.id ? teamDrop.mode : null}
+              />
             ))}
             <button className="add-team" onClick={store.addTeam}>
               <Icon name="plus" size={22} />
@@ -199,6 +285,16 @@ export default function App() {
               <div className="drag-ghost" style={{ '--el': ELEMENTS[dragChar.element]?.color ?? 'transparent' } as React.CSSProperties}>
                 {dragChar.portrait ? <Img src={dragChar.portrait} alt="" /> : <span className="unknown-mark">{dragChar.id === UNKNOWN_ID ? '?' : dragChar.name[0]}</span>}
                 <span>{dragChar.name}</span>
+              </div>
+            ) : dragTeam ? (
+              <div className="team-ghost">
+                <span className="team-ghost-name">{dragTeam.name || 'Team'}</span>
+                <span className="team-ghost-slots">
+                  {dragTeam.slots.map((s, i) => {
+                    const c = lookupCharacter(data, s.charId);
+                    return <span key={i}>{c?.portrait ? <Img src={c.portrait} alt="" /> : null}</span>;
+                  })}
+                </span>
               </div>
             ) : null}
           </DragOverlay>
@@ -220,6 +316,7 @@ export default function App() {
         <span>Wuthering Waves belongs to Kuro Games. Fan-made, not affiliated.</span>
       </footer>
 
+      <Suspense fallback={null}>
       {picker && pickerTeam && (picker.kind === 'char' || picker.kind === 'pick3') && (
         <CharacterPicker
           teamCharIds={pickerTeam.slots
@@ -251,6 +348,7 @@ export default function App() {
       )}
 
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} notify={notify} />}
+      </Suspense>
 
       {pendingImport && (
         <Modal
@@ -303,5 +401,6 @@ export default function App() {
 
       {toast && <Toast message={toast} onDone={() => setToast(null)} />}
     </div>
+    </>
   );
 }
