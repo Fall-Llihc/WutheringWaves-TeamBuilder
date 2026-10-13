@@ -90,6 +90,17 @@ export interface GameData {
 /** Placeholder id for an "Unknown / TBA" character slot. */
 export const UNKNOWN_ID = 'unknown';
 
+/**
+ * Whether two slots hold the same character for team purposes. Both Rovers
+ * (male and female) are one character, so a team can only have one of them.
+ * TBA slots never clash.
+ */
+export function sameCharacter(a: string | null, b: string | null): boolean {
+  if (!a || !b || a === UNKNOWN_ID || b === UNKNOWN_ID) return false;
+  const group = (id: string) => (id.startsWith('rover-') ? 'rover' : id);
+  return group(a) === group(b);
+}
+
 /** Converts a game path like /Game/Aki/UI/UIResources/.../T_X.T_X to a hosted .webp URL. */
 export function asset(path: string | undefined | null): string {
   if (!path) return '';

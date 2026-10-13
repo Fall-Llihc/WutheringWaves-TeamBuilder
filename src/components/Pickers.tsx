@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { ELEMENTS, UNKNOWN_ID, WEAPON_TYPES, type Character } from '../lib/data';
+import { ELEMENTS, sameCharacter, UNKNOWN_ID, WEAPON_TYPES, type Character } from '../lib/data';
 import { UNKNOWN_CHARACTER, useGame } from '../lib/game';
 import { useStore } from '../lib/store';
 import { ElementIcon, Icon, Img, Modal } from './ui';
@@ -135,14 +135,15 @@ export function CharacterPicker({
       </div>
       <div className="char-grid">
         {tiles.map((c) => {
-          const inTeam = c.id !== UNKNOWN_ID && teamCharIds.includes(c.id);
           const order = picked.indexOf(c.id);
+          // Also blocks the other Rover once one is in the team or already picked.
+          const inTeam = teamCharIds.some((id) => sameCharacter(id, c.id)) || (order < 0 && picked.some((id) => sameCharacter(id, c.id)));
           return (
             <button
               key={c.id}
               className={`char-tile r${c.rarity} ${order >= 0 ? 'picked' : ''}`}
               disabled={inTeam}
-              title={inTeam ? 'Already in this team' : c.modes.length >= 2 && c.kind === 'dual' ? `${c.name} · ${c.modes.join(' / ')}` : c.name}
+              title={inTeam ? (c.id.startsWith('rover-') ? 'This team already has a Rover' : 'Already in this team') : c.modes.length >= 2 && c.kind === 'dual' ? `${c.name} · ${c.modes.join(' / ')}` : c.name}
               style={{ '--el': ELEMENTS[c.element]?.color ?? 'transparent' } as React.CSSProperties}
               onClick={() => choose(c)}
             >

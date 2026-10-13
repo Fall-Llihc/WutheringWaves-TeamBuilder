@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { sameCharacter } from './data';
 
 export interface Slot {
   /** Character id, 'unknown' for a TBA slot, or null when empty. */
@@ -199,10 +200,12 @@ export const useStore = create<State>()(
 
         // Moving across teams must not leave a team with the same character twice.
         if (from.teamId !== to.teamId) {
-          const dupInTarget = toTeam.slots.some((s, i) => i !== to.index && s.charId === a.charId && a.charId !== 'unknown');
-          const dupInSource =
-            b.charId && fromTeam.slots.some((s, i) => i !== from.index && s.charId === b.charId && b.charId !== 'unknown');
-          if (dupInTarget || dupInSource) return 'That team already has this character.';
+          const dupInTarget = toTeam.slots.some((s, i) => i !== to.index && sameCharacter(s.charId, a.charId));
+          const dupInSource = fromTeam.slots.some((s, i) => i !== from.index && sameCharacter(s.charId, b.charId));
+          if (dupInTarget || dupInSource) {
+            const rover = (dupInTarget ? a.charId : b.charId)?.startsWith('rover-');
+            return rover ? 'That team already has a Rover.' : 'That team already has this character.';
+          }
         }
 
         const swap = !!b.charId;
