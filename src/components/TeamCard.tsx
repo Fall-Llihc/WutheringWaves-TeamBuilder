@@ -2,6 +2,7 @@ import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { memo, useEffect, useState } from 'react';
 import { activeMode, ELEMENTS, elementByName, slotElement, UNKNOWN_ID, type Character } from '../lib/data';
 import { modesOf, useCharacter, useGame } from '../lib/game';
+import { useMatrix } from '../lib/matrix';
 import { useStore, type Slot, type SlotRef, type Team, type TeamDropMode } from '../lib/store';
 import { ElementIcon, Icon, Img, LevelBadge } from './ui';
 
@@ -170,6 +171,37 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
   );
 }
 
+/** Matrix circuit buff for the team: icons only, click the picked one again to clear it. */
+function BuffRow({ team }: { team: Team }) {
+  const tower = useMatrix((s) => s.tower);
+  const status = useMatrix((s) => s.status);
+  const updateTeam = useStore((s) => s.updateTeam);
+  if (!tower) return <div className="buff-row muted">{status === 'error' ? 'Matrix buffs unavailable' : 'Loading Matrix buffs'}</div>;
+  return (
+    <div className="buff-row" role="radiogroup" aria-label="Circuit buff">
+      {tower.buffs.map((b) => {
+        const on = team.buffId === b.id;
+        return (
+          <button
+            key={b.id}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            aria-label={b.name}
+            title={`${b.name}
+
+${b.desc}`}
+            className={`buff-tile ${on ? 'on' : ''}`}
+            onClick={() => updateTeam(team.id, { buffId: on ? null : b.id })}
+          >
+            <Img src={b.icon} alt="" eager />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export const TeamCard = memo(function TeamCard({
   team,
   index,
@@ -185,6 +217,7 @@ export const TeamCard = memo(function TeamCard({
   dropMode: TeamDropMode | null;
 }) {
   const { updateTeam, moveTeam, duplicateTeam, removeTeam } = useStore.getState();
+  const matrixMode = useStore((s) => s.matrixMode);
   const [notesOpen, setNotesOpen] = useState(!!team.notes);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const hasEmpty = team.slots.some((s) => !s.charId);
@@ -231,6 +264,8 @@ export const TeamCard = memo(function TeamCard({
           <SlotCard key={i} team={team} index={i} slot={s} onPicker={onPicker} />
         ))}
       </div>
+
+      {matrixMode && <BuffRow team={team} />}
 
       {notesOpen && (
         <textarea

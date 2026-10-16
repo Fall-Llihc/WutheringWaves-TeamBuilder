@@ -1,0 +1,21 @@
+# Matrix (Singularity Expansion) circuit buffs.
+#
+# The buffs come from nanoka's tower page for the current patch:
+#   https://ww.nanoka.cc/newtower/<page>/
+# The page number goes up by 2 every patch (3.6 = 14, 3.7 = 16, 3.8 = 18, ...),
+# so only the patch needs changing when a new one comes out.
+#
+#   patch  = the patch to use
+#   anchor = a patch and its known page number; every other patch is
+#            counted from it, `step` pages per patch
+#   step   = page numbers per patch
+#
+# Patches are counted by their minor number (3.5 -> 3.7 is two patches).
+# When the major version changes (3.x -> 4.0), add an anchor for the new
+# major once its page is known, e.g. "anchor = 4.0 : 20". The closest
+# anchor at or below the patch, within the same major version, is used.
+
+patch = 3.7
+
+step = 2
+anchor = 3.7 : 16

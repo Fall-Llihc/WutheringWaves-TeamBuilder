@@ -378,6 +378,18 @@ main {
   font-size: 11.5px;
   color: var(--muted);
 }
+.matrix-note {
+  margin: -12px 0 20px;
+  font-size: 12px;
+}
+.matrix-note a {
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.error-text {
+  color: var(--accent);
+}
 .footer {
   display: flex;
   flex-wrap: wrap;
@@ -586,6 +598,40 @@ main {
 .notes:focus {
   outline: none;
   border-color: var(--line-3);
+}
+/* Matrix circuit buffs: the icons are white line art, so tiles stay ink-dark */
+.buff-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+}
+.buff-tile {
+  width: 48px;
+  height: 48px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background: rgb(var(--shade));
+  opacity: 0.55;
+  transition: opacity 0.18s var(--ease), border-color 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.buff-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.buff-tile:hover {
+  opacity: 0.85;
+}
+.buff-tile.on {
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.buff-tile:active {
+  transform: scale(0.96);
 }
 .team-tools {
   display: flex;
@@ -1505,6 +1551,34 @@ main {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+}
+.x-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.x-body .x-slots {
+  flex: 1;
+  min-width: 0;
+}
+.x-buff {
+  flex: none;
+  width: 84px;
+  height: 84px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 2px solid var(--accent);
+  background: rgb(var(--shade));
+  align-self: center;
+}
+.x-buff img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.x-buff.none {
+  border: 2px dashed var(--line-3);
+  background: transparent;
 }
 .x-slot {
   --el: transparent;

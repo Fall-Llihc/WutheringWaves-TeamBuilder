@@ -20,6 +20,7 @@ import { Icon, Img, Modal, Toast } from './components/ui';
 import { ELEMENTS, UNKNOWN_ID } from './lib/data';
 import { buildPayload, downloadBlob, parseImportFile, timestamp } from './lib/fileFormat';
 import { lookupCharacter, useGame } from './lib/game';
+import { MATRIX, towerPageUrl, useMatrix } from './lib/matrix';
 import { useStore, type SlotRef, type Team, type TeamDropMode } from './lib/store';
 
 // Dialogs load on first open; the export one pulls in html-to-image.
@@ -62,6 +63,9 @@ function teamDropMode(e: DragMoveEvent | DragEndEvent): TeamDropMode | null {
 export default function App() {
   const { status, error, data, load, fromCache } = useGame();
   const teams = useStore((s) => s.teams);
+  const matrixMode = useStore((s) => s.matrixMode);
+  const matrixError = useMatrix((s) => s.error);
+  const matrixTower = useMatrix((s) => s.tower);
   // Actions never change; reading them without subscribing avoids re-rendering on every edit.
   const store = useStore.getState();
   const [picker, setPicker] = useState<PickerRequest | null>(null);
@@ -84,6 +88,10 @@ export default function App() {
     if (!data) return;
     remap((id) => (id === UNKNOWN_ID || data.characters[id] ? null : data.aliases[id] ?? null));
   }, [data, teams, remap]);
+
+  useEffect(() => {
+    if (data && matrixMode) useMatrix.getState().load(data.version);
+  }, [data, matrixMode]);
 
   const notify = useCallback((m: string) => setToast(m), []);
 
@@ -216,6 +224,11 @@ export default function App() {
             <p className="muted">Drag a character onto another slot to move or swap it. Drag a team by its number: drop in the middle of another team to swap, on its edge to place before or after.</p>
           </div>
           <div className="workspace-actions">
+            <label className="switch" title={`Pick a circuit buff per team (Matrix, patch ${MATRIX.patch})`}>
+              <input type="checkbox" checked={matrixMode} onChange={(e) => store.setMatrixMode(e.target.checked)} />
+              <span className="switch-track" aria-hidden="true" />
+              <span>Matrix</span>
+            </label>
             <button className="link" onClick={() => store.setAllIncluded(includedCount !== teams.length)}>
               {includedCount === teams.length ? 'Exclude all from export' : 'Include all in export'}
             </button>
@@ -255,6 +268,16 @@ export default function App() {
           </div>
         )}
         {fromCache && status === 'ready' && <p className="cache-note mono">Offline copy of game data</p>}
+        {matrixMode && (
+          <p className="matrix-note muted">
+            Matrix · patch {MATRIX.patch}
+            {matrixTower?.phase ? ` · ${matrixTower.phase}` : ''} ·{' '}
+            <a href={towerPageUrl(MATRIX.page)} target="_blank" rel="noreferrer">
+              buff source
+            </a>
+            {matrixError && !matrixTower ? <span className="error-text"> · {matrixError}</span> : null}
+          </p>
+        )}
 
         <DndContext
           sensors={sensors}

@@ -15,6 +15,7 @@ import {
 import { buildPayload, downloadBlob, embedInJpg, embedInPng, timestamp } from '../lib/fileFormat';
 import { lookupCharacter, modesOf, useGame } from '../lib/game';
 import { chunkByLayout, describeLayout, planLayout } from '../lib/layout';
+import { findBuff, useMatrix, type MatrixTower } from '../lib/matrix';
 import { useStore, type ExportSettings, type Team } from '../lib/store';
 import { AvatarTile } from './AvatarTile';
 import { ElementIcon, Icon, Img, Modal } from './ui';
@@ -23,13 +24,20 @@ const CELL_W = 660;
 const GAP = 24;
 const PAD = 40;
 const GROUP_PAD = 23; // .x-group padding + border
+const BUFF_COL = 100; // .x-buff width + gap, added to each cell in Matrix mode
 
-function ExportTeam({ team, settings }: { team: Team; settings: ExportSettings }) {
+function ExportTeam({ team, settings, tower }: { team: Team; settings: ExportSettings; tower: MatrixTower | null }) {
   const data = useGame((s) => s.data);
   const autoModes = useGame((s) => s.autoModes);
+  // Older saved settings lack these keys; missing means shown.
+  const showWeapons = settings.showWeapons !== false;
+  const showEchoes = settings.showEchoes !== false;
+  const showRanks = settings.showRanks !== false;
+  const gearCols = [showWeapons && '52px', showEchoes && '52px', '1fr'].filter(Boolean).join(' ');
   return (
     <div className="x-team">
       {settings.showNames && <div className="x-team-name">{team.name || ' '}</div>}
+      <div className="x-body">
       <div className="x-slots">
         {team.slots.map((s, i) => {
           const c = lookupCharacter(data, s.charId);
@@ -42,7 +50,7 @@ function ExportTeam({ team, settings }: { team: Team; settings: ExportSettings }
               <div className="x-portrait">
                 {c && c.portrait && <Img src={c.portrait} alt="" eager />}
                 {c && !c.portrait && <span className="unknown-mark">{c.id === UNKNOWN_ID ? '?' : c.name[0]}</span>}
-                {c && <span className={`x-badge seq tier-S${s.seq}`}>S{s.seq}</span>}
+                {c && showRanks && <span className={`x-badge seq tier-S${s.seq}`}>S{s.seq}</span>}
                 {mode && c?.kind === 'dual' && <span className="x-mode">{mode}</span>}
                 {c && (
                   <span className="x-name">
@@ -51,24 +59,35 @@ function ExportTeam({ team, settings }: { team: Team; settings: ExportSettings }
                   </span>
                 )}
               </div>
-              <div className="x-gear">
-                <div className={`x-gear-tile ${w ? `r${w.rarity}` : 'none'}`}>
-                  {w && <Img src={w.icon} alt="" eager />}
-                  {w && <span className={`x-badge rank tier-R${s.rank}`}>R{s.rank}</span>}
+              {(showWeapons || showEchoes) && (
+                <div className="x-gear" style={{ gridTemplateColumns: gearCols }}>
+                  {showWeapons && (
+                    <div className={`x-gear-tile ${w ? `r${w.rarity}` : 'none'}`}>
+                      {w && <Img src={w.icon} alt="" eager />}
+                      {w && showRanks && <span className={`x-badge rank tier-R${s.rank}`}>R{s.rank}</span>}
+                    </div>
+                  )}
+                  {showEchoes && <div className={`x-gear-tile sonata ${so ? '' : 'none'}`}>{so && <Img src={so.icon} alt="" eager />}</div>}
+                  <div className="x-gear-text">
+                    {showWeapons && <span>{w?.name ?? ''}</span>}
+                    {showEchoes && <span className="muted">{so?.name ?? ''}</span>}
+                  </div>
                 </div>
-                <div className={`x-gear-tile sonata ${so ? '' : 'none'}`}>{so && <Img src={so.icon} alt="" eager />}</div>
-                <div className="x-gear-text">
-                  <span>{w?.name ?? ''}</span>
-                  <span className="muted">{so?.name ?? ''}</span>
-                </div>
-              </div>
+              )}
             </div>
           );
         })}
       </div>
+      {tower && <ExportBuff tower={tower} buffId={team.buffId ?? null} />}
+      </div>
       {settings.showNotes && team.notes.trim() && <div className="x-notes">{team.notes.trim()}</div>}
     </div>
   );
+}
+
+function ExportBuff({ tower, buffId }: { tower: MatrixTower; buffId: string | null }) {
+  const buff = findBuff(tower, buffId);
+  return <div className={`x-buff ${buff ? '' : 'none'}`}>{buff && <Img src={buff.icon} alt="" eager />}</div>;
 }
 
 export const ExportSheet = forwardRef<HTMLDivElement, { teams: Team[]; settings: ExportSettings }>(function ExportSheet(
@@ -78,8 +97,12 @@ export const ExportSheet = forwardRef<HTMLDivElement, { teams: Team[]; settings:
   const blocks = useMemo(() => planLayout(teams.length), [teams.length]);
   const groups = chunkByLayout(teams, blocks);
   const maxCols = Math.max(1, ...blocks.map((b) => b.cols));
+  const matrixMode = useStore((s) => s.matrixMode);
+  const matrixTower = useMatrix((s) => s.tower);
+  const tower = matrixMode ? matrixTower : null;
+  const cellW = CELL_W + (tower ? BUFF_COL : 0);
   const framed = groups.length > 1 ? GROUP_PAD * 2 : 0;
-  const width = maxCols * CELL_W + (maxCols - 1) * GAP + PAD * 2 + framed;
+  const width = maxCols * cellW + (maxCols - 1) * GAP + PAD * 2 + framed;
   const starts = groups.map((_, i) => groups.slice(0, i).reduce((n, g) => n + g.length, 0));
 
   return (
@@ -87,9 +110,9 @@ export const ExportSheet = forwardRef<HTMLDivElement, { teams: Team[]; settings:
       {settings.title.trim() && <div className="x-title">{settings.title.trim()}</div>}
       {groups.map((g, gi) => {
         const grid = (
-          <div className="x-block" style={{ gridTemplateColumns: `repeat(${blocks[gi].cols}, ${CELL_W}px)`, gap: GAP }}>
+          <div className="x-block" style={{ gridTemplateColumns: `repeat(${blocks[gi].cols}, ${cellW}px)`, gap: GAP }}>
             {g.map((t) => (
-              <ExportTeam key={t.id} team={t} settings={settings} />
+              <ExportTeam key={t.id} team={t} settings={settings} tower={tower} />
             ))}
           </div>
         );
@@ -503,6 +526,17 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
               <span className="switch-track" aria-hidden="true" />
               <span>Notes</span>
             </label>
+            {([
+              ['showWeapons', 'Weapons'],
+              ['showEchoes', 'Echoes'],
+              ['showRanks', 'Ranks (S / R)'],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="switch">
+                <input type="checkbox" checked={settings[key] !== false} onChange={(e) => setSettings({ [key]: e.target.checked })} />
+                <span className="switch-track" aria-hidden="true" />
+                <span>{label}</span>
+              </label>
+            ))}
           </div>
           <p className="hint">
             PNG stays sharp; JPG is smaller. Both files carry the team data, so you can import them back here. Turn off Export on a

@@ -22,6 +22,8 @@ export interface Team {
   /** Included in the image export. */
   include: boolean;
   slots: [Slot, Slot, Slot];
+  /** Matrix circuit buff picked for this team (nanoka buff id). */
+  buffId?: string | null;
 }
 
 export interface SlotRef {
@@ -38,6 +40,12 @@ export interface ExportSettings {
   title: string;
   showNotes: boolean;
   showNames: boolean;
+  /** Weapon icon and name under each character. */
+  showWeapons?: boolean;
+  /** Echo (Sonata set) icon and name under each character. */
+  showEchoes?: boolean;
+  /** Sequence (S) and weapon rank (R) badges. */
+  showRanks?: boolean;
 }
 
 export const emptySlot = (): Slot => ({ charId: null, seq: 0, weaponId: null, rank: 1, sonataId: null, mode: null });
@@ -50,6 +58,7 @@ export const newTeam = (n: number): Team => ({
   notes: '',
   include: true,
   slots: [emptySlot(), emptySlot(), emptySlot()],
+  buffId: null,
 });
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -76,6 +85,7 @@ export function sanitizeTeams(input: unknown): Team[] {
       notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 2000) : '',
       include: raw.include !== false,
       slots,
+      buffId: typeof raw.buffId === 'string' ? raw.buffId : null,
     };
   });
 }
@@ -83,6 +93,9 @@ export function sanitizeTeams(input: unknown): Team[] {
 interface State {
   teams: Team[];
   exportSettings: ExportSettings;
+  /** Matrix mode: each team gets a circuit buff, shown in the editor and the team sheet. */
+  matrixMode: boolean;
+  setMatrixMode: (v: boolean) => void;
   addTeam: () => void;
   removeTeam: (id: string) => void;
   duplicateTeam: (id: string) => void;
@@ -114,7 +127,9 @@ export const useStore = create<State>()(
   persist(
     (set, get) => ({
       teams: [newTeam(1)],
-      exportSettings: { format: 'png', title: '', showNotes: true, showNames: true },
+      exportSettings: { format: 'png', title: '', showNotes: true, showNames: true, showWeapons: true, showEchoes: true, showRanks: true },
+      matrixMode: false,
+      setMatrixMode: (v) => set({ matrixMode: v }),
 
       addTeam: () => set((st) => ({ teams: [...st.teams, newTeam(st.teams.length + 1)] })),
 
