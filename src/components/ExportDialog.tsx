@@ -1,11 +1,22 @@
 import { toJpeg, toPng } from 'html-to-image';
 import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activeMode, ELEMENTS, slotElement, UNKNOWN_ID } from '../lib/data';
-import { canvasToBlob, fileSafe, renderCharacterCard } from '../lib/characterCard';
+import {
+  canvasToBlob,
+  fileSafe,
+  drawAvatar,
+  loadAvatarSource,
+  renderCharacterCard,
+  type AvatarBackground,
+  type AvatarOffset,
+  type AvatarSource,
+  type AvatarZoom,
+} from '../lib/characterCard';
 import { buildPayload, downloadBlob, embedInJpg, embedInPng, timestamp } from '../lib/fileFormat';
 import { lookupCharacter, modesOf, useGame } from '../lib/game';
 import { chunkByLayout, describeLayout, planLayout } from '../lib/layout';
 import { useStore, type ExportSettings, type Team } from '../lib/store';
+import { AvatarTile } from './AvatarTile';
 import { ElementIcon, Icon, Img, Modal } from './ui';
 
 const CELL_W = 660;
@@ -129,12 +140,45 @@ interface CharCard {
   canvas: HTMLCanvasElement;
 }
 
+interface AvatarEntry {
+  id: string;
+  name: string;
+  src: AvatarSource;
+  color?: string;
+}
+
+// Nudges are remembered per character, since the art never changes position.
+const OFFSETS_KEY = 'wtb:avatar-offsets';
+const NO_OFFSET: AvatarOffset = { x: 0, y: 0 };
+
+function readOffsets(): Record<string, AvatarOffset> {
+  try {
+    return JSON.parse(localStorage.getItem(OFFSETS_KEY) ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function writeOffsets(o: Record<string, AvatarOffset>) {
+  try {
+    localStorage.setItem(OFFSETS_KEY, JSON.stringify(o));
+  } catch {
+    /* storage blocked: nudges last for this session only */
+  }
+}
+
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function ExportDialog({ onClose, notify }: { onClose: () => void; notify: (m: string) => void }) {
   const teams = useStore((s) => s.teams);
   const data = useGame((s) => s.data);
-  const [mode, setMode] = useState<'sheet' | 'chars'>('sheet');
+  const [mode, setMode] = useState<'sheet' | 'chars' | 'avatars'>('sheet');
+  const [avZoom, setAvZoom] = useState<AvatarZoom>('medium');
+  const [avBg, setAvBg] = useState<AvatarBackground>('none');
+  const autoModes = useGame((s) => s.autoModes);
+  const [avatars, setAvatars] = useState<AvatarEntry[]>([]);
+  const [offsets, setOffsets] = useState(readOffsets);
+  const avOptions = useMemo(() => ({ zoom: avZoom, background: avBg }), [avZoom, avBg]);
   const [charTeamId, setCharTeamId] = useState(() => (teams.find((t) => t.include) ?? teams[0])?.id);
   const charTeam = teams.find((t) => t.id === charTeamId) ?? teams[0];
   const [cards, setCards] = useState<CharCard[]>([]);
@@ -195,16 +239,62 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
     };
   }, [mode, charTeam, data]);
 
+  // Avatars follow the chosen team; art loads once, drawing happens per tile.
+  useEffect(() => {
+    if (mode !== 'avatars' || !charTeam || !data) return;
+    let cancelled = false;
+    setRendering(true);
+    (async () => {
+      const out: AvatarEntry[] = [];
+      let missing = 0;
+      for (const s of charTeam.slots) {
+        const char = lookupCharacter(data, s.charId);
+        if (!char) continue;
+        const src = await loadAvatarSource(char);
+        if (!src) {
+          missing++;
+          continue;
+        }
+        const element = slotElement(char, activeMode(modesOf(char, autoModes), s.mode));
+        out.push({ id: char.id, name: char.name, src, color: ELEMENTS[element]?.color });
+      }
+      if (cancelled) return;
+      setAvatars(out);
+      setNoArt(missing);
+      setRendering(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, charTeam, data, autoModes]);
+
+  const setOffset = (id: string, o: AvatarOffset) =>
+    setOffsets((prev) => {
+      const next = { ...prev, [id]: o };
+      if (!o.x && !o.y) delete next[id];
+      writeOffsets(next);
+      return next;
+    });
+
+  const outputs =
+    mode === 'avatars'
+      ? avatars.map((a) => ({
+          name: a.name,
+          canvas: () => drawAvatar(a.src, { ...avOptions, color: a.color, offset: offsets[a.id] }),
+          suffix: '-avatar',
+        }))
+      : cards.map((c) => ({ name: c.name, canvas: () => c.canvas, suffix: '' }));
+
   const doCharExport = async () => {
-    if (!charTeam || !cards.length) return;
+    if (!charTeam || !outputs.length) return;
     setBusy(true);
     try {
-      for (const [i, c] of cards.entries()) {
-        downloadBlob(await canvasToBlob(c.canvas), `${fileSafe(charTeam.name)}-${i + 1}-${fileSafe(c.name)}.png`);
+      for (const [i, o] of outputs.entries()) {
+        downloadBlob(await canvasToBlob(o.canvas()), `${fileSafe(charTeam.name)}-${i + 1}-${fileSafe(o.name)}${o.suffix}.png`);
         // Browsers drop rapid back-to-back downloads; space them out.
-        if (i < cards.length - 1) await pause(400);
+        if (i < outputs.length - 1) await pause(400);
       }
-      notify(`Exported ${cards.length} character image${cards.length === 1 ? '' : 's'}.`);
+      notify(`Exported ${outputs.length} character image${outputs.length === 1 ? '' : 's'}.`);
     } catch (e) {
       notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -247,6 +337,19 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
     }
   };
 
+  const teamPicker = (
+      <label className="field">
+        <span>Team</span>
+        <select value={charTeam?.id} onChange={(e) => setCharTeamId(e.target.value)}>
+          {teams.map((t, i) => (
+            <option key={t.id} value={t.id}>
+              {String(i + 1).padStart(2, '0')} · {t.name || 'Untitled team'}
+            </option>
+          ))}
+        </select>
+      </label>
+  );
+
   return (
     <Modal
       title="Export image"
@@ -265,12 +368,12 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
         ) : (
           <>
             <span className="muted">
-              {cards.length} character{cards.length === 1 ? '' : 's'}
+              {outputs.length} character{outputs.length === 1 ? '' : 's'}
               {noArt ? ` · ${noArt} without art skipped` : ''}
             </span>
-            <button className="btn primary" disabled={busy || rendering || !cards.length} onClick={doCharExport}>
+            <button className="btn primary" disabled={busy || rendering || !outputs.length} onClick={doCharExport}>
               <Icon name="download" size={16} />{' '}
-              {busy ? 'Saving' : cards.length > 1 ? `Download ${cards.length} PNGs` : 'Download PNG'}
+              {busy ? 'Saving' : outputs.length > 1 ? `Download ${outputs.length} PNGs` : 'Download PNG'}
             </button>
           </>
         )
@@ -284,21 +387,65 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
           <button role="tab" aria-selected={mode === 'chars'} className={mode === 'chars' ? 'on' : ''} onClick={() => setMode('chars')}>
             Per character
           </button>
+          <button role="tab" aria-selected={mode === 'avatars'} className={mode === 'avatars' ? 'on' : ''} onClick={() => setMode('avatars')}>
+            Avatars
+          </button>
         </div>
       </div>
-      {mode === 'chars' ? (
+      {mode === 'avatars' ? (
         <>
           <div className="export-opts">
-            <label className="field">
-              <span>Team</span>
-              <select value={charTeam?.id} onChange={(e) => setCharTeamId(e.target.value)}>
-                {teams.map((t, i) => (
-                  <option key={t.id} value={t.id}>
-                    {String(i + 1).padStart(2, '0')} · {t.name || 'Untitled team'}
-                  </option>
+            {teamPicker}
+            <div className="field">
+              <span>Framing</span>
+              <div className="seg">
+                {(['close', 'medium', 'wide'] as const).map((z) => (
+                  <button key={z} className={avZoom === z ? 'on' : ''} onClick={() => setAvZoom(z)}>
+                    {z[0].toUpperCase() + z.slice(1)}
+                  </button>
                 ))}
-              </select>
-            </label>
+              </div>
+            </div>
+            <div className="field">
+              <span>Background</span>
+              <div className="seg">
+                {([
+                  ['none', 'Transparent'],
+                  ['light', 'Light'],
+                  ['element', 'Element'],
+                ] as const).map(([b, label]) => (
+                  <button key={b} className={avBg === b ? 'on' : ''} onClick={() => setAvBg(b)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className="hint">
+            One round 512px PNG for each character in the team. If someone sits off-centre, drag the picture or use the arrows
+            (Shift for bigger steps); the position is remembered for that character.
+          </p>
+          {avatars.length ? (
+            <div className={`char-cards avatars ${rendering ? 'rendering' : ''}`}>
+              {avatars.map((a, i) => (
+                <AvatarTile
+                  key={`${i}-${a.id}`}
+                  name={a.name}
+                  src={a.src}
+                  options={avBg === 'element' ? { ...avOptions, color: a.color } : avOptions}
+                  offset={offsets[a.id] ?? NO_OFFSET}
+                  onOffset={(o) => setOffset(a.id, o)}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="empty-note">{rendering ? 'Rendering' : 'This team has no characters with art yet.'}</p>
+          )}
+        </>
+      ) : mode === 'chars' ? (
+        <>
+          <div className="export-opts">
+            {teamPicker}
           </div>
           <p className="hint">
             One transparent PNG per character: full art with Sequence, weapon and weapon rank. Characters without art (TBA or not

@@ -1,7 +1,9 @@
 import {
   ArrowClockwiseIcon,
+  ArrowDownIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
+  ArrowUpIcon,
   CopyIcon,
   DotsSixVerticalIcon,
   DownloadSimpleIcon,
@@ -186,6 +188,8 @@ const ICONS = {
   plus: PlusIcon,
   left: ArrowLeftIcon,
   right: ArrowRightIcon,
+  up: ArrowUpIcon,
+  down: ArrowDownIcon,
   copy: CopyIcon,
   grip: DotsSixVerticalIcon,
   trash: TrashIcon,

@@ -118,3 +118,116 @@ export const fileSafe = (s: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-|-$/g, '')
     .toLowerCase() || 'team';
+
+export type AvatarZoom = 'close' | 'medium' | 'wide';
+export type AvatarBackground = 'none' | 'light' | 'element';
+
+/** Manual nudge, as a share of the circle's diameter. */
+export interface AvatarOffset {
+  x: number;
+  y: number;
+}
+
+export interface AvatarSource {
+  art: HTMLImageElement;
+  /** Top of the head and its horizontal centre, in art pixels. */
+  top: number;
+  cx: number;
+}
+
+export interface AvatarOptions {
+  zoom: AvatarZoom;
+  background: AvatarBackground;
+  /** Element colour, used when background is 'element'. */
+  color?: string;
+  offset?: AvatarOffset;
+  size?: number;
+}
+
+// Circle diameter as a share of the art's width.
+const AVATAR_SPAN: Record<AvatarZoom, number> = { close: 0.42, medium: 0.56, wide: 0.74 };
+const HEAD_BAND = 0.2; // share of the art's width scanned below the hairline
+
+/**
+ * Finds the top of the head and its horizontal centre from the art's alpha:
+ * the first row with a solid run of pixels, then the opaque centroid of the
+ * band just below it.
+ */
+function findHead(art: HTMLImageElement) {
+  const scan = 160;
+  const k = scan / art.naturalWidth;
+  const w = scan;
+  const h = Math.round(art.naturalHeight * k);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(art, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  const solid = (x: number, y: number) => px[(y * w + x) * 4 + 3] > 140;
+
+  let top = 0;
+  for (let y = 0; y < h; y++) {
+    let n = 0;
+    for (let x = 0; x < w; x++) if (solid(x, y)) n++;
+    if (n > w * 0.06) {
+      top = y;
+      break;
+    }
+  }
+  const bandH = Math.round(w * HEAD_BAND);
+  let sum = 0;
+  let n = 0;
+  for (let y = top; y < Math.min(h, top + bandH); y++) {
+    for (let x = 0; x < w; x++) {
+      if (solid(x, y)) {
+        sum += x;
+        n++;
+      }
+    }
+  }
+  return { top: top / k, cx: n ? sum / n / k : art.naturalWidth / 2 };
+}
+
+/** Loads a character's art and locates the head. Returns null when there is no art. */
+export async function loadAvatarSource(char: Character): Promise<AvatarSource | null> {
+  const art = await loadImage(char.portrait);
+  if (!art) return null;
+  return { art, ...findHead(art) };
+}
+
+/** Draws the circle-cropped head shot; synchronous so it can follow a drag. */
+export function drawAvatar(
+  src: AvatarSource,
+  { zoom, background, color, offset = { x: 0, y: 0 }, size = 512 }: AvatarOptions,
+  canvas = document.createElement('canvas'),
+): HTMLCanvasElement {
+  const d = src.art.naturalWidth * AVATAR_SPAN[zoom];
+  // Leave a little air above the hair, then let the shoulders fill the rest.
+  const sx = src.cx - d / 2 - offset.x * d;
+  const sy = src.top - d * 0.06 - offset.y * d;
+
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, size, size);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.clip();
+  if (background !== 'none') {
+    ctx.fillStyle = background === 'element' && color ? color : '#f6f2ee';
+    ctx.fillRect(0, 0, size, size);
+  }
+  ctx.drawImage(src.art, sx, sy, d, d, 0, 0, size, size);
+  ctx.restore();
+
+  // White ring, drawn inside the edge so it isn't cut off by the canvas.
+  const ring = Math.max(2, Math.round(size * 0.025));
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - ring / 2, 0, Math.PI * 2);
+  ctx.lineWidth = ring;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+  return canvas;
+}

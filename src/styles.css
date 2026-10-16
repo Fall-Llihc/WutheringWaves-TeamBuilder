@@ -1403,6 +1403,44 @@ main {
   border: 1px solid var(--line);
   background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 20px 20px;
 }
+.char-cards.avatars {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
+}
+.avatar-tile canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 20px 20px;
+  cursor: grab;
+  touch-action: none;
+}
+.avatar-tile canvas:active {
+  cursor: grabbing;
+}
+.avatar-tile canvas:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 3px;
+}
+.avatar-tile figcaption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.avatar-nudge {
+  display: inline-flex;
+  gap: 2px;
+}
+.avatar-nudge .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+.avatar-nudge .icon-btn:disabled {
+  opacity: 0.35;
+}
 .char-card figcaption {
   font-size: 12.5px;
   color: var(--text-2);
