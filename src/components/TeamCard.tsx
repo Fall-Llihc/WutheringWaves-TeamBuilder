@@ -220,7 +220,6 @@ export const TeamCard = memo(function TeamCard({
   const matrixMode = useStore((s) => s.matrixMode);
   const [notesOpen, setNotesOpen] = useState(!!team.notes);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const hasEmpty = team.slots.some((s) => !s.charId);
   const data: DragData = { type: 'team', teamId: team.id };
   const drag = useDraggable({ id: `team:${team.id}`, data });
   const drop = useDroppable({ id: `team-drop:${team.id}`, data });
@@ -280,7 +279,7 @@ export const TeamCard = memo(function TeamCard({
       )}
 
       <footer className="team-tools">
-        <button className="tool" disabled={!hasEmpty} onClick={() => onPicker({ kind: 'pick3', teamId: team.id })}>
+        <button className="tool" onClick={() => onPicker({ kind: 'pick3', teamId: team.id })} title="Pick a whole new team; applies when you confirm">
           <Icon name="users" size={16} /> Fill slots
         </button>
         <button className={`tool ${notesOpen ? 'active' : ''}`} onClick={() => setNotesOpen((o) => !o)} aria-pressed={notesOpen}>

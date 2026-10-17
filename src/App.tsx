@@ -154,8 +154,7 @@ export default function App() {
       const prevWeapon = pickerSlot?.weaponId ? data?.weapons[pickerSlot.weaponId] : null;
       store.setCharacter(picker.ref, id, !!(c && prevWeapon && prevWeapon.type === c.weaponType));
     } else if (picker.kind === 'pick3') {
-      const empty = pickerTeam.slots.map((s, i) => (s.charId ? -1 : i)).filter((i) => i >= 0);
-      ids.slice(0, empty.length).forEach((id, k) => store.setCharacter({ teamId: pickerTeam.id, index: empty[k] }, id, false));
+      store.replaceTeamCharacters(pickerTeam.id, ids);
     }
     setPicker(null);
   };
@@ -342,10 +341,9 @@ export default function App() {
       <Suspense fallback={null}>
       {picker && pickerTeam && (picker.kind === 'char' || picker.kind === 'pick3') && (
         <CharacterPicker
-          teamCharIds={pickerTeam.slots
-            .filter((_, i) => picker.kind === 'pick3' || i !== picker.ref.index)
-            .map((s) => s.charId)}
-          slots={picker.kind === 'pick3' ? pickerTeam.slots.filter((s) => !s.charId).length : 1}
+          // A whole-team pick replaces everyone, so nobody in the team blocks a choice.
+          teamCharIds={picker.kind === 'pick3' ? [] : pickerTeam.slots.filter((_, i) => i !== picker.ref.index).map((s) => s.charId)}
+          slots={picker.kind === 'pick3' ? 3 : 1}
           onPick={handleCharPick}
           onClose={() => setPicker(null)}
         />

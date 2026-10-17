@@ -14,7 +14,7 @@ import {
 } from '../lib/characterCard';
 import { buildPayload, downloadBlob, embedInJpg, embedInPng, timestamp } from '../lib/fileFormat';
 import { lookupCharacter, modesOf, useGame } from '../lib/game';
-import { chunkByLayout, describeLayout, planLayout } from '../lib/layout';
+import { chunkByLayout, describeLayout, planLayout, type Block, type SheetMetrics } from '../lib/layout';
 import { findBuff, useMatrix, type MatrixTower } from '../lib/matrix';
 import { useStore, type ExportSettings, type Team } from '../lib/store';
 import { AvatarTile } from './AvatarTile';
@@ -23,8 +23,11 @@ import { ElementIcon, Icon, Img, Modal } from './ui';
 const CELL_W = 660;
 const GAP = 24;
 const PAD = 40;
-const GROUP_PAD = 23; // .x-group padding + border
 const BUFF_COL = 100; // .x-buff width + gap, added to each cell in Matrix mode
+// First guess at a team card's height and the sheet's title/footer; replaced by measurements.
+const EST_CELL_H = 406;
+const EST_CHROME_H = 178;
+const SET_LABEL_H = 40; // "Set 1 / 2" line + its gap
 
 function ExportTeam({ team, settings, tower }: { team: Team; settings: ExportSettings; tower: MatrixTower | null }) {
   const data = useGame((s) => s.data);
@@ -90,44 +93,32 @@ function ExportBuff({ tower, buffId }: { tower: MatrixTower; buffId: string | nu
   return <div className={`x-buff ${buff ? '' : 'none'}`}>{buff && <Img src={buff.icon} alt="" eager />}</div>;
 }
 
-export const ExportSheet = forwardRef<HTMLDivElement, { teams: Team[]; settings: ExportSettings }>(function ExportSheet(
-  { teams, settings },
-  ref,
-) {
-  const blocks = useMemo(() => planLayout(teams.length), [teams.length]);
-  const groups = chunkByLayout(teams, blocks);
-  const maxCols = Math.max(1, ...blocks.map((b) => b.cols));
+/** One set of teams, rendered 1:1 as its own image. */
+export const ExportSheet = forwardRef<
+  HTMLDivElement,
+  { teams: Team[]; block: Block; settings: ExportSettings; setIndex: number; setTotal: number; firstTeam: number }
+>(function ExportSheet({ teams, block, settings, setIndex, setTotal, firstTeam }, ref) {
   const matrixMode = useStore((s) => s.matrixMode);
   const matrixTower = useMatrix((s) => s.tower);
   const tower = matrixMode ? matrixTower : null;
   const cellW = CELL_W + (tower ? BUFF_COL : 0);
-  const framed = groups.length > 1 ? GROUP_PAD * 2 : 0;
-  const width = maxCols * cellW + (maxCols - 1) * GAP + PAD * 2 + framed;
-  const starts = groups.map((_, i) => groups.slice(0, i).reduce((n, g) => n + g.length, 0));
+  const width = block.cols * cellW + (block.cols - 1) * GAP + PAD * 2;
+  // Feeds want square or portrait: a sheet that comes out wider than tall is padded to a square.
+  const last = firstTeam + teams.length;
 
   return (
-    <div ref={ref} className="x-sheet" style={{ width }}>
+    <div ref={ref} className="x-sheet" style={{ width, minHeight: width }}>
       {settings.title.trim() && <div className="x-title">{settings.title.trim()}</div>}
-      {groups.map((g, gi) => {
-        const grid = (
-          <div className="x-block" style={{ gridTemplateColumns: `repeat(${blocks[gi].cols}, ${cellW}px)`, gap: GAP }}>
-            {g.map((t) => (
-              <ExportTeam key={t.id} team={t} settings={settings} tower={tower} />
-            ))}
-          </div>
-        );
-        // With more than one block, frame each so the grids read as separate sets.
-        return groups.length > 1 ? (
-          <div key={gi} className="x-group">
-            <div className="x-group-label">
-              Set {gi + 1} · {g.length === 1 ? `Team ${starts[gi] + 1}` : `Teams ${starts[gi] + 1}–${starts[gi] + g.length}`}
-            </div>
-            {grid}
-          </div>
-        ) : (
-          <div key={gi}>{grid}</div>
-        );
-      })}
+      {setTotal > 1 && (
+        <div className="x-group-label">
+          Set {setIndex + 1} / {setTotal} · {teams.length === 1 ? `Team ${firstTeam + 1}` : `Teams ${firstTeam + 1}–${last}`}
+        </div>
+      )}
+      <div className="x-block" style={{ gridTemplateColumns: `repeat(${block.cols}, ${cellW}px)`, gap: GAP }}>
+        {teams.map((t) => (
+          <ExportTeam key={t.id} team={t} settings={settings} tower={tower} />
+        ))}
+      </div>
       <div className="x-foot">
         <span>Wuthering Waves team sheet</span>
         <img src="llihc-logo.png" alt="Llihc" className="x-logo" />
@@ -210,8 +201,18 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
   const settings = useStore((s) => s.exportSettings);
   const setSettings = useStore((s) => s.setExportSettings);
   const included = teams.filter((t) => t.include);
-  const blocks = planLayout(included.length);
-  const sheetRef = useRef<HTMLDivElement>(null);
+  const matrixMode = useStore((s) => s.matrixMode);
+  const matrixReady = useMatrix((s) => !!s.tower);
+  const cellW = CELL_W + (matrixMode && matrixReady ? BUFF_COL : 0);
+  const [measured, setMeasured] = useState({ cellH: EST_CELL_H, chromeH: EST_CHROME_H });
+  const metrics: SheetMetrics = useMemo(
+    () => ({ cellW, cellH: measured.cellH, gap: GAP, chromeW: PAD * 2, chromeH: measured.chromeH }),
+    [cellW, measured],
+  );
+  const blocks = useMemo(() => planLayout(included.length, metrics), [included.length, metrics]);
+  const sets = chunkByLayout(included, blocks);
+  const sheetRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const stackRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.3);
   const [sheetH, setSheetH] = useState(0);
@@ -220,18 +221,35 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
 
   useLayoutEffect(() => {
     const fit = () => {
-      const sheet = sheetRef.current;
+      const stack = stackRef.current;
       const wrap = wrapRef.current;
-      if (!sheet || !wrap) return;
-      setScale(Math.min(1, wrap.clientWidth / sheet.offsetWidth));
-      setSheetH(sheet.offsetHeight);
+      if (!stack || !wrap) return;
+      setScale(Math.min(1, wrap.clientWidth / stack.offsetWidth));
+      setSheetH(stack.offsetHeight);
     };
     fit();
     const ro = new ResizeObserver(fit);
-    if (sheetRef.current) ro.observe(sheetRef.current);
+    if (stackRef.current) ro.observe(stackRef.current);
     if (wrapRef.current) ro.observe(wrapRef.current);
     return () => ro.disconnect();
   }, [included.length, settings]);
+
+  // Card height doesn't depend on the grid (cards are a fixed width), so one
+  // measurement after render settles the plan.
+  useLayoutEffect(() => {
+    const sheet = sheetRefs.current[0];
+    if (!sheet) return;
+    const cards = Array.from(stackRef.current?.querySelectorAll<HTMLElement>('.x-team') ?? []);
+    const cellH = Math.max(0, ...cards.map((c) => c.offsetHeight));
+    const parts = Array.from(sheet.children) as HTMLElement[];
+    // The set label only shows with 2+ sets; measuring it could flip the plan
+    // back and forth, so its room is always reserved instead.
+    const chrome = parts.filter((el) => !el.classList.contains('x-block') && !el.classList.contains('x-group-label'));
+    const chromeH = PAD * 2 + chrome.reduce((h, el) => h + el.offsetHeight, 0) + chrome.length * GAP + SET_LABEL_H;
+    if (cellH && (Math.abs(cellH - measured.cellH) > 2 || Math.abs(chromeH - measured.chromeH) > 2)) {
+      setMeasured({ cellH, chromeH });
+    }
+  });
 
   // Per-character cards re-render whenever the chosen team changes.
   useEffect(() => {
@@ -326,11 +344,10 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
   };
 
   const doExport = async () => {
-    const node = sheetRef.current;
-    if (!node || !included.length) return;
+    const nodes = sets.map((_, i) => sheetRefs.current[i]);
+    if (!included.length || nodes.some((n) => !n)) return;
     setBusy(true);
     try {
-      await waitForImages(node);
       const opts = {
         pixelRatio,
         backgroundColor: '#efe8e2',
@@ -340,19 +357,35 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
         onImageErrorHandler: () => undefined,
       };
       const render = settings.format === 'png' ? toPng : (n: HTMLElement, o: typeof opts) => toJpeg(n, { ...o, quality: 0.93 });
-      let url: string;
-      try {
-        url = await render(node, opts);
-      } catch {
-        // Webfont embedding can fail on some networks; fall back to system fonts.
-        url = await render(node, { ...opts, skipFonts: true } as typeof opts);
-      }
-      const payload = JSON.stringify(buildPayload(included));
-      const bytes = dataUrlToBytes(url);
-      const withData = settings.format === 'png' ? embedInPng(bytes, payload) : embedInJpg(bytes, payload);
       const ext = settings.format === 'png' ? 'png' : 'jpg';
-      downloadBlob(new Blob([withData as BlobPart], { type: settings.format === 'png' ? 'image/png' : 'image/jpeg' }), `wuwa-teams-${timestamp()}.${ext}`);
-      notify(`Exported ${included.length} team${included.length === 1 ? '' : 's'} as ${ext.toUpperCase()}.`);
+      const stamp = timestamp();
+      // Last set first: downloads list newest on top, so set 1 ends up first in line to upload.
+      const order = nodes.map((_, i) => i).reverse();
+      for (const [k, i] of order.entries()) {
+        const node = nodes[i];
+        await waitForImages(node!);
+        let url: string;
+        try {
+          url = await render(node!, opts);
+        } catch {
+          // Webfont embedding can fail on some networks; fall back to system fonts.
+          url = await render(node!, { ...opts, skipFonts: true } as typeof opts);
+        }
+        // Each image carries its own set's teams, so importing it brings back that set.
+        const payload = JSON.stringify(buildPayload(sets[i]));
+        const bytes = dataUrlToBytes(url);
+        const withData = settings.format === 'png' ? embedInPng(bytes, payload) : embedInJpg(bytes, payload);
+        const suffix = sets.length > 1 ? `-set${i + 1}of${sets.length}` : '';
+        downloadBlob(
+          new Blob([withData as BlobPart], { type: settings.format === 'png' ? 'image/png' : 'image/jpeg' }),
+          `wuwa-teams-${stamp}${suffix}.${ext}`,
+        );
+        // Browsers drop rapid back-to-back downloads; space them out.
+        if (k < order.length - 1) await pause(400);
+      }
+      notify(
+        `Exported ${included.length} team${included.length === 1 ? '' : 's'} as ${sets.length} ${ext.toUpperCase()}${sets.length === 1 ? '' : 's'}.`,
+      );
     } catch (e) {
       notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -382,10 +415,11 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
         mode === 'sheet' ? (
           <>
             <span className="muted">
-              {included.length} team{included.length === 1 ? '' : 's'} · layout {describeLayout(blocks) || '–'}
+              {included.length} team{included.length === 1 ? '' : 's'} · {sets.length} image{sets.length === 1 ? '' : 's'} ·{' '}
+              {describeLayout(blocks) || '–'} (columns x rows)
             </span>
             <button className="btn primary" disabled={busy || !included.length} onClick={doExport}>
-              <Icon name="download" size={16} /> {busy ? 'Rendering' : `Download ${settings.format.toUpperCase()}`}
+              <Icon name="download" size={16} /> {busy ? 'Rendering' : `Download ${sets.length > 1 ? `${sets.length} ` : ''}${settings.format.toUpperCase()}${sets.length > 1 ? 's' : ''}`}
             </button>
           </>
         ) : (
@@ -539,13 +573,29 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
             ))}
           </div>
           <p className="hint">
-            PNG stays sharp; JPG is smaller. Both files carry the team data, so you can import them back here. Turn off Export on a
+            Up to 4 images, square or portrait for social feeds, about 9 teams each; every set but the last uses the same grid. PNG
+            stays sharp; JPG is smaller. Each file carries its set's team data, so you can import it back here. Turn off Export on a
             team to leave it out.
           </p>
           {included.length ? (
             <div className="preview-wrap" ref={wrapRef} style={{ height: sheetH * scale }}>
               <div className="preview-scale" style={{ transform: `scale(${scale})` }}>
-                <ExportSheet ref={sheetRef} teams={included} settings={settings} />
+                <div className="preview-stack" ref={stackRef}>
+                  {sets.map((set, i) => (
+                    <ExportSheet
+                      key={i}
+                      ref={(el) => {
+                        sheetRefs.current[i] = el;
+                      }}
+                      teams={set}
+                      block={blocks[i]}
+                      settings={settings}
+                      setIndex={i}
+                      setTotal={sets.length}
+                      firstTeam={blocks.slice(0, i).reduce((n, b) => n + b.count, 0)}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           ) : (

@@ -21,7 +21,7 @@ Qingxiao ; single ; Aero ; Sword
 Suisui ; single ; Glacio ; Rectifier
 Yangyang: Xuanling ; single ; Havoc ; Sword
 Lucilla ; Glacio Chafe / Echo ; Glacio ; Rectifier
-Lucy ; single ; Spectro ; Pistols
+Lucy ; single ; Spectro ; Broadblade
 Rebecca ; single ; Electro ; Pistols
 Denia ; Fusion Burst / Tune Strain ; Fusion ; Rectifier
 Hiyuki ; single ; Glacio ; Sword

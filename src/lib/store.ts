@@ -106,6 +106,8 @@ interface State {
   updateSlot: (ref: SlotRef, patch: Partial<Slot>) => void;
   /** Places a character; clears weapon if the new character can't use it. */
   setCharacter: (ref: SlotRef, charId: string | null, keepWeapon: boolean) => void;
+  /** Replaces the whole team's line-up with these characters (the rest of the slots end up empty). */
+  replaceTeamCharacters: (teamId: string, charIds: string[]) => void;
   clearSlot: (ref: SlotRef) => void;
   /** Drag and drop: swaps when the target holds a character, otherwise moves. */
   dropSlot: (from: SlotRef, to: SlotRef) => string | null;
@@ -115,6 +117,23 @@ interface State {
   importTeams: (teams: Team[], mode: 'replace' | 'append') => void;
   resetAll: () => void;
   setExportSettings: (patch: Partial<ExportSettings>) => void;
+}
+
+/** Sequence a character already has in any team, so a new placement starts from it. */
+function knownSeq(teams: Team[], charId: string | null): number {
+  if (!charId) return 0;
+  for (const t of teams) for (const s of t.slots) if (s.charId === charId) return s.seq;
+  return 0;
+}
+
+/** A character's Sequence is the same everywhere: sets it on every slot holding them. */
+function syncSeq(teams: Team[], charId: string | null, seq: number): Team[] {
+  if (!charId) return teams;
+  return teams.map((t) =>
+    t.slots.some((s) => s.charId === charId && s.seq !== seq)
+      ? { ...t, slots: t.slots.map((s) => (s.charId === charId ? { ...s, seq } : s)) as Team['slots'] }
+      : t,
+  );
 }
 
 function mapSlot(teams: Team[], ref: SlotRef, fn: (s: Slot) => Slot): Team[] {
@@ -183,7 +202,13 @@ export const useStore = create<State>()(
 
       updateTeam: (id, patch) => set((st) => ({ teams: st.teams.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
 
-      updateSlot: (ref, patch) => set((st) => ({ teams: mapSlot(st.teams, ref, (s) => ({ ...s, ...patch })) })),
+      updateSlot: (ref, patch) =>
+        set((st) => {
+          const teams = mapSlot(st.teams, ref, (s) => ({ ...s, ...patch }));
+          if (patch.seq === undefined) return { teams };
+          const charId = teams.find((t) => t.id === ref.teamId)?.slots[ref.index].charId ?? null;
+          return { teams: syncSeq(teams, charId, patch.seq) };
+        }),
 
       setCharacter: (ref, charId, keepWeapon) =>
         set((st) => ({
@@ -193,10 +218,27 @@ export const useStore = create<State>()(
               : {
                   ...s,
                   charId,
-                  seq: 0,
+                  seq: knownSeq(st.teams, charId),
                   mode: null,
                   weaponId: keepWeapon ? s.weaponId : null,
                   rank: keepWeapon ? s.rank : 1,
+                },
+          ),
+        })),
+
+      replaceTeamCharacters: (teamId, charIds) =>
+        set((st) => ({
+          teams: st.teams.map((t) =>
+            t.id !== teamId
+              ? t
+              : {
+                  ...t,
+                  slots: [0, 1, 2].map((i) => {
+                    const charId = charIds[i] ?? null;
+                    // Keep the slot as is when the same character stays in the same place.
+                    if (charId && t.slots[i].charId === charId) return t.slots[i];
+                    return charId ? { ...emptySlot(), charId, seq: knownSeq(st.teams, charId) } : emptySlot();
+                  }) as Team['slots'],
                 },
           ),
         })),

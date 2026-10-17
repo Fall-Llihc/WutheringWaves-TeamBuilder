@@ -47,6 +47,23 @@ function Chips<T extends string | number>({
 
 /* ------------------------------------------------------------------ */
 
+type CharSort = 'most' | 'least' | 'newest';
+const SORT_KEY = 'wtb:char-sort';
+const SORTS: Array<{ value: CharSort; label: string }> = [
+  { value: 'most', label: 'Most used' },
+  { value: 'least', label: 'Least used' },
+  { value: 'newest', label: 'Newest' },
+];
+
+function readSort(): CharSort {
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return v === 'least' || v === 'newest' ? v : 'most';
+  } catch {
+    return 'most';
+  }
+}
+
 export function CharacterPicker({
   teamCharIds,
   slots,
@@ -55,7 +72,7 @@ export function CharacterPicker({
 }: {
   /** Characters already in the team being edited (can't be picked twice). */
   teamCharIds: Array<string | null>;
-  /** How many characters to pick (1 for a slot, up to 3 for "Pick 3"). */
+  /** How many characters to pick: 1 for a slot, 3 to pick a whole team (applied on confirm). */
   slots: number;
   onPick: (ids: string[]) => void;
   onClose: () => void;
@@ -67,6 +84,16 @@ export function CharacterPicker({
   const [wt, setWt] = useState<number | null>(null);
   const [rar, setRar] = useState<number | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
+  const [sort, setSortState] = useState<CharSort>(readSort);
+  const setSort = (v: CharSort | null) => {
+    const next = v ?? 'most';
+    setSortState(next);
+    try {
+      localStorage.setItem(SORT_KEY, next);
+    } catch {
+      /* not remembered */
+    }
+  };
 
   const usage = useMemo(() => {
     const m: Record<string, number> = {};
@@ -85,34 +112,45 @@ export function CharacterPicker({
           (!wt || c.weaponType === wt) &&
           (!rar || c.rarity === rar),
       )
-      .sort((a, b) => a.order - b.order);
-  }, [data, q, el, wt, rar]);
+      .sort((a, b) => {
+        // Usage sorts fall back to release order (newest first) among equal counts.
+        const byUse = (usage[b.id] ?? 0) - (usage[a.id] ?? 0);
+        if (sort === 'most' && byUse) return byUse;
+        if (sort === 'least' && byUse) return -byUse;
+        return a.order - b.order;
+      });
+  }, [data, q, el, wt, rar, sort, usage]);
 
   const showUnknown = !q && !el && !wt && !rar;
   const multi = slots > 1;
 
+  // A whole-team pick only applies once confirmed.
+  const full = multi && picked.length >= slots;
   const choose = (c: Character) => {
     if (!multi) return onPick([c.id]);
     if (picked.includes(c.id)) return setPicked(picked.filter((x) => x !== c.id));
-    const next = [...picked, c.id];
-    if (next.length >= slots) return onPick(next);
-    setPicked(next);
+    if (!full) setPicked([...picked, c.id]);
   };
 
   const tiles = showUnknown ? [UNKNOWN_CHARACTER, ...list] : list;
 
   return (
     <Modal
-      title={multi ? `Pick up to ${slots} characters · ${picked.length}/${slots}` : 'Choose a character'}
+      title={multi ? `Choose the team · ${picked.length}/${slots}` : 'Choose a character'}
       onClose={onClose}
       wide
       footer={
         multi ? (
           <>
-            <span className="muted">Picks fill the team's empty slots in order.</span>
-            <button className="btn" disabled={!picked.length} onClick={() => onPick(picked)}>
-              Use {picked.length} selected
-            </button>
+            <span className="muted">Replaces the whole team, in pick order. Nothing changes until you apply.</span>
+            <span className="row-gap">
+              <button className="btn quiet" disabled={!picked.length} onClick={() => setPicked([])}>
+                Clear picks
+              </button>
+              <button className="btn primary" disabled={!picked.length} onClick={() => onPick(picked)}>
+                Apply team ({picked.length}/{slots})
+              </button>
+            </span>
           </>
         ) : undefined
       }
@@ -132,17 +170,31 @@ export function CharacterPicker({
           allLabel="All weapons"
         />
         <Chips options={[{ value: 5, label: '5★' }, { value: 4, label: '4★' }]} value={rar} onChange={setRar} allLabel="Any rarity" />
+        <div className="chips sort-chips" role="radiogroup" aria-label="Sort">
+          {SORTS.map((o) => (
+            <button
+              key={o.value}
+              role="radio"
+              aria-checked={sort === o.value}
+              className={sort === o.value ? 'chip on' : 'chip'}
+              onClick={() => setSort(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="char-grid">
         {tiles.map((c) => {
           const order = picked.indexOf(c.id);
           // Also blocks the other Rover once one is in the team or already picked.
           const inTeam = teamCharIds.some((id) => sameCharacter(id, c.id)) || (order < 0 && picked.some((id) => sameCharacter(id, c.id)));
+          const blocked = inTeam || (full && order < 0);
           return (
             <button
               key={c.id}
               className={`char-tile r${c.rarity} ${order >= 0 ? 'picked' : ''}`}
-              disabled={inTeam}
+              disabled={blocked}
               title={inTeam ? (c.id.startsWith('rover-') ? 'This team already has a Rover' : 'Already in this team') : c.modes.length >= 2 && c.kind === 'dual' ? `${c.name} · ${c.modes.join(' / ')}` : c.name}
               style={{ '--el': ELEMENTS[c.element]?.color ?? 'transparent' } as React.CSSProperties}
               onClick={() => choose(c)}
