@@ -15,7 +15,36 @@
 # major once its page is known, e.g. "anchor = 4.0 : 20". The closest
 # anchor at or below the patch, within the same major version, is used.
 
-patch = 3.7
+patch = 3.8
 
 step = 2
 anchor = 3.7 : 16
+
+# ---------------------------------------------------------------------------
+# Score plan (Matrix mode)
+#
+# round = points of each boss in that round, boss 1 to boss 5 (the 5th is the
+#         round's last boss). One line per round, in order. A team's score is
+#         spent on the bosses in this order: R1 boss 1, R1 boss 2, ... R5 boss 5.
+#         Numbers from wuwamatrix.com's point structure for patch 3.7.
+# mimic_bonus = points granted for defeating a Matrix Mimic. Its share of a
+#         boss is not damage, so it is left out of that boss's HP bar.
+# ---------------------------------------------------------------------------
+
+# Dari wuwamatrix.com, 2026-11-07
+round = 4680, 4680, 4680, 4680, 6665
+round = 9158, 9158, 9158, 9158, 14456
+round = 20222, 20222, 20222, 20222, 23239
+round = 21234, 22245, 23256, 24267, 28736
+round = 26289, 27300, 28311, 29322, 34791
+
+mimic_bonus = 1000
+
+vigor = Suisui : 2
+vigor = Mornye : 2
+vigor = Shorekeeper : 2
+vigor = Verina : 2
+vigor = Baizhi : 2
+vigor = Buling : 2
+
+bonus = Lucilla

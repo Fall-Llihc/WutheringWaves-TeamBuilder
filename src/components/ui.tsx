@@ -4,14 +4,23 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ArrowUpIcon,
+  ArrowsInLineHorizontalIcon,
+  ArrowsOutLineHorizontalIcon,
+  CaretDownIcon,
+  CheckIcon,
   CopyIcon,
+  CrownSimpleIcon,
   DotsSixVerticalIcon,
   DownloadSimpleIcon,
   FloppyDiskIcon,
   ImageIcon,
   MagnifyingGlassIcon,
+  MoonIcon,
   NotePencilIcon,
   PlusIcon,
+  SparkleIcon,
+  SunIcon,
+  TargetIcon,
   TrashIcon,
   UploadSimpleIcon,
   UsersThreeIcon,
@@ -201,11 +210,22 @@ const ICONS = {
   note: NotePencilIcon,
   search: MagnifyingGlassIcon,
   refresh: ArrowClockwiseIcon,
+  sparkle: SparkleIcon,
+  check: CheckIcon,
+  caret: CaretDownIcon,
+  crown: CrownSimpleIcon,
+  target: TargetIcon,
+  widen: ArrowsOutLineHorizontalIcon,
+  narrow: ArrowsInLineHorizontalIcon,
+  sun: SunIcon,
+  moon: MoonIcon,
 } satisfies Record<string, PhosphorIcon>;
 
-export function Icon({ name, size = 18 }: { name: keyof typeof ICONS; size?: number }) {
+export type IconName = keyof typeof ICONS;
+
+export function Icon({ name, size = 18, weight = 'regular' }: { name: IconName; size?: number; weight?: 'regular' | 'fill' | 'bold' }) {
   const C = ICONS[name];
-  return <C size={size} weight="regular" aria-hidden="true" />;
+  return <C size={size} weight={weight} aria-hidden="true" />;
 }
 
 /** Image that hides itself when the source fails to load. */
@@ -252,6 +272,20 @@ export function ElementIcon({ id, size = 18, title }: { id: number; size?: numbe
       className="el-icon"
       crossOrigin="anonymous"
       draggable={false}
+    />
+  );
+}
+
+/**
+ * The game's Vigor icon (public/icons/vigor.png), drawn in the current text
+ * colour: the picture is used as a mask, so it follows the theme and badges.
+ */
+export function VigorIcon({ size = 12 }: { size?: number }) {
+  return (
+    <span
+      className="vigor-icon"
+      aria-hidden="true"
+      style={{ width: Math.round((size * 41) / 60), height: size, maskImage: 'url(icons/vigor.png)', WebkitMaskImage: 'url(icons/vigor.png)' }}
     />
   );
 }

@@ -24,6 +24,8 @@ export interface Team {
   slots: [Slot, Slot, Slot];
   /** Matrix circuit buff picked for this team (nanoka buff id). */
   buffId?: string | null;
+  /** Matrix points this team scored (or is expected to score). */
+  score?: number;
 }
 
 export interface SlotRef {
@@ -86,8 +88,52 @@ export function sanitizeTeams(input: unknown): Team[] {
       include: raw.include !== false,
       slots,
       buffId: typeof raw.buffId === 'string' ? raw.buffId : null,
+      score: clampScore(raw.score),
     };
   });
+}
+
+/** Matrix points: a whole number from 0 up to a generous ceiling. */
+export const clampScore = (v: unknown) => Math.min(9_999_999, Math.max(0, Math.round(Number(v) || 0)));
+
+/** Max Vigor a manual override may set. */
+const clampVigor = (v: unknown) => Math.max(1, Math.min(9, Math.round(Number(v) || 1)));
+
+const DEFAULT_EXPORT: ExportSettings = { format: 'png', title: '', showNotes: true, showNames: true, showWeapons: true, showEchoes: true, showRanks: true };
+
+/** Everything a full backup holds besides the teams. */
+export interface Setup {
+  matrixMode: boolean;
+  owned: Record<string, true>;
+  vigorOverride: Record<string, number>;
+  exportSettings: ExportSettings;
+}
+
+/** Coerces an imported setup into valid values; anything missing falls back to the defaults. */
+export function sanitizeSetup(input: unknown): Setup {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const owned: Record<string, true> = {};
+  const ownedIn = raw.owned;
+  const ids = Array.isArray(ownedIn) ? ownedIn : ownedIn && typeof ownedIn === 'object' ? Object.keys(ownedIn) : [];
+  for (const id of ids) if (typeof id === 'string' && id) owned[id] = true;
+
+  const vigorOverride: Record<string, number> = {};
+  if (raw.vigorOverride && typeof raw.vigorOverride === 'object')
+    for (const [k, v] of Object.entries(raw.vigorOverride)) if (k && Number.isFinite(Number(v))) vigorOverride[k] = clampVigor(v);
+
+  const ex = (raw.exportSettings ?? {}) as Partial<ExportSettings>;
+  const flag = (v: unknown, d: boolean | undefined) => (typeof v === 'boolean' ? v : d);
+  const exportSettings: ExportSettings = {
+    format: ex.format === 'jpg' ? 'jpg' : 'png',
+    title: typeof ex.title === 'string' ? ex.title.slice(0, 120) : '',
+    showNotes: flag(ex.showNotes, DEFAULT_EXPORT.showNotes)!,
+    showNames: flag(ex.showNames, DEFAULT_EXPORT.showNames)!,
+    showWeapons: flag(ex.showWeapons, DEFAULT_EXPORT.showWeapons),
+    showEchoes: flag(ex.showEchoes, DEFAULT_EXPORT.showEchoes),
+    showRanks: flag(ex.showRanks, DEFAULT_EXPORT.showRanks),
+  };
+
+  return { matrixMode: raw.matrixMode === true, owned, vigorOverride, exportSettings };
 }
 
 interface State {
@@ -96,6 +142,12 @@ interface State {
   /** Matrix mode: each team gets a circuit buff, shown in the editor and the team sheet. */
   matrixMode: boolean;
   setMatrixMode: (v: boolean) => void;
+  /** Matrix roster: the characters the player owns (only these can be dragged into teams). */
+  owned: Record<string, true>;
+  setOwned: (ids: string[], owned: boolean) => void;
+  /** Manual Max Vigor per Vigor group (character id, or 'rover'), on top of matrix.txt. */
+  vigorOverride: Record<string, number>;
+  setVigorOverride: (group: string, value: number | null) => void;
   addTeam: () => void;
   removeTeam: (id: string) => void;
   duplicateTeam: (id: string) => void;
@@ -115,6 +167,8 @@ interface State {
   /** Rewrites outdated character ids (old per-element Rover ids, roster-only ids) to current ones. */
   remapCharacters: (resolve: (id: string) => { id: string; mode?: string } | null) => void;
   importTeams: (teams: Team[], mode: 'replace' | 'append') => void;
+  /** Loads a backup's setup: 'replace' takes it as is, 'append' adds its owned roster and overrides to the current ones. */
+  importSetup: (setup: Setup, mode: 'replace' | 'append') => void;
   resetAll: () => void;
   setExportSettings: (patch: Partial<ExportSettings>) => void;
 }
@@ -146,9 +200,29 @@ export const useStore = create<State>()(
   persist(
     (set, get) => ({
       teams: [newTeam(1)],
-      exportSettings: { format: 'png', title: '', showNotes: true, showNames: true, showWeapons: true, showEchoes: true, showRanks: true },
+      exportSettings: { ...DEFAULT_EXPORT },
       matrixMode: false,
       setMatrixMode: (v) => set({ matrixMode: v }),
+
+      owned: {},
+      setOwned: (ids, owned) =>
+        set((st) => {
+          const next = { ...st.owned };
+          for (const id of ids) {
+            if (owned) next[id] = true;
+            else delete next[id];
+          }
+          return { owned: next };
+        }),
+
+      vigorOverride: {},
+      setVigorOverride: (group, value) =>
+        set((st) => {
+          const next = { ...st.vigorOverride };
+          if (value === null) delete next[group];
+          else next[group] = clampVigor(value);
+          return { vigorOverride: next };
+        }),
 
       addTeam: () => set((st) => ({ teams: [...st.teams, newTeam(st.teams.length + 1)] })),
 
@@ -293,6 +367,17 @@ export const useStore = create<State>()(
 
       importTeams: (incoming, mode) =>
         set((st) => ({ teams: mode === 'replace' ? (incoming.length ? incoming : [newTeam(1)]) : [...st.teams, ...incoming] })),
+
+      importSetup: (setup, mode) =>
+        set((st) =>
+          mode === 'replace'
+            ? { ...setup }
+            : {
+                matrixMode: st.matrixMode || setup.matrixMode,
+                owned: { ...st.owned, ...setup.owned },
+                vigorOverride: { ...st.vigorOverride, ...setup.vigorOverride },
+              },
+        ),
 
       resetAll: () => set({ teams: [newTeam(1)] }),
 

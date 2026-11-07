@@ -1,13 +1,17 @@
 /**
  * Save / load formats.
  *
- * - .json: plain team data.
- * - .png / .jpg: the exported showcase image carries the same team data
- *   inside the file (a PNG tEXt chunk or JPEG comment segments), so an
- *   exported image can be imported back. Sites that re-compress images
- *   (most social media) strip this data; the original file keeps it.
+ * - .json: a full backup. The teams (characters, Sequence, weapons, Sonata
+ *   sets, notes, circuit buffs, points) plus the setup around them: Matrix
+ *   mode, the owned roster, Max Vigor overrides and the export settings.
+ * - .png / .jpg: the exported image carries the teams only, inside the file
+ *   (a PNG tEXt chunk or JPEG comment segments), so an exported image can be
+ *   imported back. Sites that re-compress images (most social media) strip
+ *   this data; the original file keeps it.
+ *
+ * Files from before the setup was saved (v1) hold teams only and still load.
  */
-import { sanitizeTeams, type Team } from './store';
+import { sanitizeSetup, sanitizeTeams, type Setup, type Team } from './store';
 
 const APP = 'wuwa-team-builder';
 const PNG_KEYWORD = 'wuwa-teams';
@@ -16,11 +20,39 @@ const JPG_PREFIX = 'WTB:';
 interface Payload {
   app: string;
   v: number;
+  savedAt?: string;
   teams: Array<Omit<Team, 'id'>>;
+  /** Everything besides the teams; only in .json backups. */
+  setup?: SavedSetup;
 }
 
+/** Setup as written to file: the owned roster as a sorted id list. */
+interface SavedSetup extends Omit<Setup, 'owned'> {
+  owned: string[];
+}
+
+export interface ImportResult {
+  teams: Team[];
+  /** Present when the file is a full backup. */
+  setup: Setup | null;
+}
+
+const stripIds = (teams: Team[]) => teams.map(({ id: _id, ...rest }) => rest);
+
+/** Teams only: what exported images carry. */
 export function buildPayload(teams: Team[]): Payload {
-  return { app: APP, v: 1, teams: teams.map(({ id: _id, ...rest }) => rest) };
+  return { app: APP, v: 1, teams: stripIds(teams) };
+}
+
+/** Full backup for Save file: teams plus roster, Matrix setup and export settings. */
+export function buildBackup(teams: Team[], setup: Setup): Payload {
+  return {
+    app: APP,
+    v: 2,
+    savedAt: new Date().toISOString(),
+    teams: stripIds(teams),
+    setup: { ...setup, owned: Object.keys(setup.owned).sort() },
+  };
 }
 
 const utf8ToB64 = (s: string) => {
@@ -143,7 +175,7 @@ function readFromJpg(buf: Uint8Array): string | null {
 
 /* ---------------- Import ---------------- */
 
-export async function parseImportFile(file: File): Promise<Team[]> {
+export async function parseImportFile(file: File): Promise<ImportResult> {
   const buf = new Uint8Array(await file.arrayBuffer());
   let text: string | null;
   const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
@@ -163,9 +195,12 @@ export async function parseImportFile(file: File): Promise<Team[]> {
   } catch {
     throw new Error('The file is not valid team data.');
   }
-  const payload = parsed as Partial<Payload> | unknown[];
-  const teams = Array.isArray(payload) ? payload : (payload as Partial<Payload>).teams;
-  return sanitizeTeams(teams);
+  if (Array.isArray(parsed)) return { teams: sanitizeTeams(parsed), setup: null };
+  const payload = (parsed ?? {}) as Partial<Payload>;
+  return {
+    teams: sanitizeTeams(payload.teams),
+    setup: payload.setup && typeof payload.setup === 'object' ? sanitizeSetup(payload.setup) : null,
+  };
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

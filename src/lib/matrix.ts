@@ -13,12 +13,31 @@ export interface MatrixBuff {
   icon: string;
 }
 
+/** A boss in the round line-up (the same five every round). */
+export interface MatrixBoss {
+  name: string;
+  icon: string;
+  /** Resistance tags, e.g. "Fusion RES". */
+  res: string[];
+}
+
+/** A resonator the tower enhances this cycle (nanoka character id). */
+export interface MatrixEnhanced {
+  id: string;
+  desc: string;
+}
+
 export interface MatrixTower {
   page: number;
   patch: string;
   name: string;
   phase: string;
   buffs: MatrixBuff[];
+  /** Boss line-up for one round, in fighting order. */
+  bosses: MatrixBoss[];
+  /** Score needed for each rank tier, lowest first (from the game's score_level_rule). */
+  ranks: number[];
+  enhanced: MatrixEnhanced[];
 }
 
 interface Patch {
@@ -73,7 +92,8 @@ export const MATRIX = parseMatrixConfig(matrixText);
 
 export const towerPageUrl = (page: number) => `https://ww.nanoka.cc/newtower/${page}/`;
 
-const cacheKey = (page: number) => `wtb:matrix:${page}`;
+// Bump the prefix whenever MatrixTower gains fields, so old cached copies are refetched.
+const cacheKey = (page: number) => `wtb:matrix2:${page}`;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function fetchTower(page: number, versions: string[]): Promise<MatrixTower> {
@@ -95,6 +115,22 @@ async function fetchTower(page: number, versions: string[]): Promise<MatrixTower
           desc: fillParams(b.desc ?? '', b.param ?? []),
           icon: asset(b.icon),
         })),
+        // Waves list every round's line-up back to back; the first five are one round.
+        bosses: Object.values<any>(raw.waves ?? {})
+          .slice(0, 5)
+          .map((w) => ({
+            name: w.name ?? '',
+            icon: asset(w.icon),
+            res: Object.values<any>(w.tag ?? {}).map((t) => String(t.name ?? '')),
+          })),
+        ranks: (raw.score_level_rule ?? [])
+          .map((r: any) => Number(r.value))
+          .filter((v: number) => Number.isFinite(v))
+          .sort((a: number, b: number) => a - b),
+        enhanced: Object.entries<any>(raw.roles ?? {}).map(([id, r]) => {
+          const first: any = Object.values(r ?? {})[0] ?? {};
+          return { id, desc: fillParams(first.desc ?? '', first.param ?? []) };
+        }),
       };
     } catch (e) {
       lastError = e;

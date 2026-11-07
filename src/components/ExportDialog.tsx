@@ -13,11 +13,13 @@ import {
   type AvatarZoom,
 } from '../lib/characterCard';
 import { buildPayload, downloadBlob, embedInJpg, embedInPng, timestamp } from '../lib/fileFormat';
+import { themeBackground } from '../lib/theme';
 import { lookupCharacter, modesOf, useGame } from '../lib/game';
 import { chunkByLayout, describeLayout, planLayout, type Block, type SheetMetrics } from '../lib/layout';
 import { findBuff, useMatrix, type MatrixTower } from '../lib/matrix';
 import { useStore, type ExportSettings, type Team } from '../lib/store';
 import { AvatarTile } from './AvatarTile';
+import { MatrixSheet } from './MatrixExport';
 import { ElementIcon, Icon, Img, Modal } from './ui';
 
 const CELL_W = 660;
@@ -186,7 +188,9 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export function ExportDialog({ onClose, notify }: { onClose: () => void; notify: (m: string) => void }) {
   const teams = useStore((s) => s.teams);
   const data = useGame((s) => s.data);
-  const [mode, setMode] = useState<'sheet' | 'chars' | 'avatars'>('sheet');
+  const matrixOn = useStore((s) => s.matrixMode);
+  const [mode, setMode] = useState<'sheet' | 'chars' | 'avatars' | 'matrix'>(matrixOn ? 'matrix' : 'sheet');
+  const matrixRef = useRef<HTMLDivElement>(null);
   const [avZoom, setAvZoom] = useState<AvatarZoom>('medium');
   const [avBg, setAvBg] = useState<AvatarBackground>('none');
   const autoModes = useGame((s) => s.autoModes);
@@ -232,7 +236,7 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
     if (stackRef.current) ro.observe(stackRef.current);
     if (wrapRef.current) ro.observe(wrapRef.current);
     return () => ro.disconnect();
-  }, [included.length, settings]);
+  }, [included.length, settings, mode]);
 
   // Card height doesn't depend on the grid (cards are a fixed width), so one
   // measurement after render settles the plan.
@@ -343,19 +347,52 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
     }
   };
 
+  const renderOpts = () => ({
+    pixelRatio,
+    // Exports follow the theme on screen
+    backgroundColor: themeBackground(),
+    cacheBust: false,
+    // A missing picture shouldn't sink the whole export; it renders blank instead.
+    imagePlaceholder: TRANSPARENT_PX,
+    onImageErrorHandler: () => undefined,
+  });
+
+  /** Matrix plan: one image of the included teams, carrying their data for import. */
+  const doMatrixExport = async () => {
+    const node = matrixRef.current;
+    if (!node || !included.length) return;
+    setBusy(true);
+    try {
+      const opts = renderOpts();
+      const render = settings.format === 'png' ? toPng : (n: HTMLElement, o: typeof opts) => toJpeg(n, { ...o, quality: 0.93 });
+      await waitForImages(node);
+      let url: string;
+      try {
+        url = await render(node, opts);
+      } catch {
+        url = await render(node, { ...opts, skipFonts: true } as typeof opts);
+      }
+      const payload = JSON.stringify(buildPayload(included));
+      const bytes = dataUrlToBytes(url);
+      const withData = settings.format === 'png' ? embedInPng(bytes, payload) : embedInJpg(bytes, payload);
+      downloadBlob(
+        new Blob([withData as BlobPart], { type: settings.format === 'png' ? 'image/png' : 'image/jpeg' }),
+        `wuwa-matrix-${timestamp()}.${settings.format}`,
+      );
+      notify(`Exported the Matrix plan (${included.length} team${included.length === 1 ? '' : 's'}).`);
+    } catch (e) {
+      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doExport = async () => {
     const nodes = sets.map((_, i) => sheetRefs.current[i]);
     if (!included.length || nodes.some((n) => !n)) return;
     setBusy(true);
     try {
-      const opts = {
-        pixelRatio,
-        backgroundColor: '#efe8e2',
-        cacheBust: false,
-        // A missing picture shouldn't sink the whole export; it renders blank instead.
-        imagePlaceholder: TRANSPARENT_PX,
-        onImageErrorHandler: () => undefined,
-      };
+      const opts = renderOpts();
       const render = settings.format === 'png' ? toPng : (n: HTMLElement, o: typeof opts) => toJpeg(n, { ...o, quality: 0.93 });
       const ext = settings.format === 'png' ? 'png' : 'jpg';
       const stamp = timestamp();
@@ -412,7 +449,16 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
       onClose={onClose}
       wide
       footer={
-        mode === 'sheet' ? (
+        mode === 'matrix' ? (
+          <>
+            <span className="muted">
+              {included.length} team{included.length === 1 ? '' : 's'} · one {settings.format.toUpperCase()}
+            </span>
+            <button className="btn primary" disabled={busy || !included.length} onClick={doMatrixExport}>
+              <Icon name="download" size={16} /> {busy ? 'Rendering' : `Download ${settings.format.toUpperCase()}`}
+            </button>
+          </>
+        ) : mode === 'sheet' ? (
           <>
             <span className="muted">
               {included.length} team{included.length === 1 ? '' : 's'} · {sets.length} image{sets.length === 1 ? '' : 's'} ·{' '}
@@ -438,6 +484,11 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
     >
       <div className="export-mode">
         <div className="seg" role="tablist" aria-label="Export type">
+          {matrixOn && (
+            <button role="tab" aria-selected={mode === 'matrix'} className={mode === 'matrix' ? 'on' : ''} onClick={() => setMode('matrix')}>
+              Matrix plan
+            </button>
+          )}
           <button role="tab" aria-selected={mode === 'sheet'} className={mode === 'sheet' ? 'on' : ''} onClick={() => setMode('sheet')}>
             Team sheet
           </button>
@@ -449,7 +500,59 @@ export function ExportDialog({ onClose, notify }: { onClose: () => void; notify:
           </button>
         </div>
       </div>
-      {mode === 'avatars' ? (
+      {mode === 'matrix' ? (
+        <>
+          <div className="export-opts">
+            <label className="field">
+              <span>Title (optional)</span>
+              <input value={settings.title} maxLength={80} placeholder="Matrix plan" onChange={(e) => setSettings({ title: e.target.value })} />
+            </label>
+            <div className="field">
+              <span>Format</span>
+              <div className="seg">
+                <button className={settings.format === 'png' ? 'on' : ''} onClick={() => setSettings({ format: 'png' })}>
+                  PNG
+                </button>
+                <button className={settings.format === 'jpg' ? 'on' : ''} onClick={() => setSettings({ format: 'jpg' })}>
+                  JPG
+                </button>
+              </div>
+            </div>
+            <div className="field">
+              <span>Resolution</span>
+              <div className="seg">
+                <button className={pixelRatio === 1 ? 'on' : ''} onClick={() => setPixelRatio(1)}>
+                  1x
+                </button>
+                <button className={pixelRatio === 2 ? 'on' : ''} onClick={() => setPixelRatio(2)}>
+                  2x
+                </button>
+              </div>
+            </div>
+            <label className="switch">
+              <input type="checkbox" checked={settings.showRanks !== false} onChange={(e) => setSettings({ showRanks: e.target.checked })} />
+              <span className="switch-track" aria-hidden="true" />
+              <span>Sequence badges</span>
+            </label>
+          </div>
+          <p className="hint">
+            One image of the whole plan: total points and rank, the boss run by round, and each team with its circuit buff, points and
+            where it stops. Teams with Export off are left out, and the run is counted over the included teams only. The file carries
+            the teams, so it imports back here.
+          </p>
+          {included.length ? (
+            <div className="preview-wrap" ref={wrapRef} style={{ height: sheetH * scale }}>
+              <div className="preview-scale" style={{ transform: `scale(${scale})` }}>
+                <div className="preview-stack" ref={stackRef}>
+                  <MatrixSheet ref={matrixRef} teams={included} title={settings.title} showRanks={settings.showRanks !== false} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="empty-note">No team is set to export. Turn on Export on at least one team.</p>
+          )}
+        </>
+      ) : mode === 'avatars' ? (
         <>
           <div className="export-opts">
             {teamPicker}

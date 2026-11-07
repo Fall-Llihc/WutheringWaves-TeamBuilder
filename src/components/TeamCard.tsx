@@ -2,9 +2,10 @@ import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { memo, useEffect, useState } from 'react';
 import { activeMode, ELEMENTS, elementByName, slotElement, UNKNOWN_ID, type Character } from '../lib/data';
 import { modesOf, useCharacter, useGame } from '../lib/game';
-import { useMatrix } from '../lib/matrix';
+import { useVigor } from '../lib/matrixHooks';
 import { useStore, type Slot, type SlotRef, type Team, type TeamDropMode } from '../lib/store';
-import { ElementIcon, Icon, Img, LevelBadge } from './ui';
+import { MatrixTeamPanel } from './MatrixTeam';
+import { ElementIcon, Icon, Img, LevelBadge, VigorIcon } from './ui';
 
 export type PickerRequest =
   | { kind: 'char'; ref: SlotRef }
@@ -14,8 +15,11 @@ export type PickerRequest =
 
 export const slotKey = (r: SlotRef) => `${r.teamId}:${r.index}`;
 
-/** Drag payloads; collision detection keeps slot drags on slots and team drags on teams. */
-export type DragData = ({ type: 'slot' } & SlotRef) | { type: 'team'; teamId: string };
+/**
+ * Drag payloads; collision detection keeps slot drags on slots and team drags on teams.
+ * Roster drags (Matrix mode) land on slots too.
+ */
+export type DragData = ({ type: 'slot' } & SlotRef) | { type: 'team'; teamId: string } | { type: 'roster'; charId: string };
 
 export function ModeToggle({
   char,
@@ -54,7 +58,20 @@ export function ModeToggle({
   );
 }
 
-function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; slot: Slot; onPicker: (r: PickerRequest) => void }) {
+function SlotCard({
+  team,
+  index,
+  slot,
+  onPicker,
+  next,
+}: {
+  team: Team;
+  index: number;
+  slot: Slot;
+  onPicker: (r: PickerRequest) => void;
+  /** Matrix mode: the empty slot the next roster click fills. */
+  next?: boolean;
+}) {
   const ref: SlotRef = { teamId: team.id, index };
   const id = slotKey(ref);
   const char = useCharacter(slot.charId);
@@ -75,6 +92,10 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
   const mode = activeMode(modes, slot.mode);
   const element = char ? slotElement(char, mode) : 0;
   const isUnknown = slot.charId === UNKNOWN_ID;
+  const matrixMode = useStore((s) => s.matrixMode);
+  const vigorFor = useVigor();
+  const vigor = matrixMode && char && !isUnknown ? vigorFor(char) : null;
+  const overVigor = !!vigor && vigor.used > vigor.max;
 
   return (
     <div
@@ -90,7 +111,7 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
         tabIndex={0}
         aria-disabled={false}
         aria-label={char ? `${char.name}. Click to change, drag to move` : 'Choose character'}
-        className={`portrait ${char ? `r${char.rarity}` : 'empty'}`}
+        className={`portrait ${char ? `r${char.rarity}` : 'empty'} ${next && !char ? 'is-next' : ''}`}
         onClick={() => onPicker({ kind: 'char', ref })}
         onKeyDown={(e) => e.key === 'Enter' && onPicker({ kind: 'char', ref })}
       >
@@ -123,6 +144,14 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
             >
               <Icon name="x" size={14} />
             </button>
+            {overVigor && vigor && (
+              <span className="slot-vigor" title={`Over Vigor: in ${vigor.used} teams, Max Vigor ${vigor.max}`}>
+                <VigorIcon size={13} />
+                <span className="mono">
+                  {vigor.used}/{vigor.max}
+                </span>
+              </span>
+            )}
             <span className="portrait-name">
               {element ? <ElementIcon id={element} size={16} /> : null}
               <span>{char.name}</span>
@@ -130,8 +159,8 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
           </>
         ) : (
           <span className="portrait-add">
-            <Icon name="plus" size={22} />
-            <span>Add</span>
+            <Icon name={next ? 'target' : 'plus'} size={22} />
+            <span>{next ? 'Next' : 'Add'}</span>
           </span>
         )}
       </div>
@@ -171,43 +200,15 @@ function SlotCard({ team, index, slot, onPicker }: { team: Team; index: number; 
   );
 }
 
-/** Matrix circuit buff for the team: icons only, click the picked one again to clear it. */
-function BuffRow({ team }: { team: Team }) {
-  const tower = useMatrix((s) => s.tower);
-  const status = useMatrix((s) => s.status);
-  const updateTeam = useStore((s) => s.updateTeam);
-  if (!tower) return <div className="buff-row muted">{status === 'error' ? 'Matrix buffs unavailable' : 'Loading Matrix buffs'}</div>;
-  return (
-    <div className="buff-row" role="radiogroup" aria-label="Circuit buff">
-      {tower.buffs.map((b) => {
-        const on = team.buffId === b.id;
-        return (
-          <button
-            key={b.id}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            aria-label={b.name}
-            title={`${b.name}
-
-${b.desc}`}
-            className={`buff-tile ${on ? 'on' : ''}`}
-            onClick={() => updateTeam(team.id, { buffId: on ? null : b.id })}
-          >
-            <Img src={b.icon} alt="" eager />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export const TeamCard = memo(function TeamCard({
   team,
   index,
   total,
   onPicker,
   dropMode,
+  active,
+  flash,
+  onActivate,
 }: {
   team: Team;
   index: number;
@@ -215,6 +216,11 @@ export const TeamCard = memo(function TeamCard({
   onPicker: (r: PickerRequest) => void;
   /** Where a dragged team would land relative to this one, while hovering it. */
   dropMode: TeamDropMode | null;
+  /** Matrix mode: the team that roster clicks fill. */
+  active?: boolean;
+  /** Just became the target automatically (the previous team filled up). */
+  flash?: boolean;
+  onActivate?: (teamId: string) => void;
 }) {
   const { updateTeam, moveTeam, duplicateTeam, removeTeam } = useStore.getState();
   const matrixMode = useStore((s) => s.matrixMode);
@@ -223,12 +229,18 @@ export const TeamCard = memo(function TeamCard({
   const data: DragData = { type: 'team', teamId: team.id };
   const drag = useDraggable({ id: `team:${team.id}`, data });
   const drop = useDroppable({ id: `team-drop:${team.id}`, data });
+  const filled = team.slots.filter((s) => s.charId).length;
+  const nextSlot = active ? team.slots.findIndex((s) => !s.charId) : -1;
 
   return (
     <section
       ref={drop.setNodeRef}
-      className={`team ${team.include ? '' : 'excluded'} ${drag.isDragging ? 'dragging' : ''} ${dropMode ? `drop-${dropMode}` : ''}`}
+      className={`team ${team.include ? '' : 'excluded'} ${drag.isDragging ? 'dragging' : ''} ${dropMode ? `drop-${dropMode}` : ''} ${active ? 'is-active' : ''} ${flash ? 'is-flash' : ''}`}
       aria-label={team.name}
+      aria-current={active ? 'true' : undefined}
+      data-team-id={team.id}
+      onPointerDownCapture={() => onActivate?.(team.id)}
+      onFocusCapture={() => onActivate?.(team.id)}
     >
       <header className="team-head">
         <button
@@ -251,6 +263,17 @@ export const TeamCard = memo(function TeamCard({
           aria-label="Team name"
           placeholder="Team name"
         />
+        {active && (
+          <span className="target-chip" title="Roster clicks fill this team. When it is full, the next team with room takes over.">
+            <span className="target-dot" aria-hidden="true" />
+            <span>{filled === 3 ? 'Target · full' : 'Adding here'}</span>
+            <span className="target-pips" aria-label={`${filled} of 3 slots filled`}>
+              {[0, 1, 2].map((i) => (
+                <i key={i} className={team.slots[i].charId ? 'on' : ''} />
+              ))}
+            </span>
+          </span>
+        )}
         <label className="switch" title="Include this team in the image export">
           <input type="checkbox" checked={team.include} onChange={(e) => updateTeam(team.id, { include: e.target.checked })} />
           <span className="switch-track" aria-hidden="true" />
@@ -260,11 +283,11 @@ export const TeamCard = memo(function TeamCard({
 
       <div className="slots">
         {team.slots.map((s, i) => (
-          <SlotCard key={i} team={team} index={i} slot={s} onPicker={onPicker} />
+          <SlotCard key={i} team={team} index={i} slot={s} onPicker={onPicker} next={i === nextSlot} />
         ))}
       </div>
 
-      {matrixMode && <BuffRow team={team} />}
+      {matrixMode && <MatrixTeamPanel team={team} />}
 
       {notesOpen && (
         <textarea

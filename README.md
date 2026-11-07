@@ -24,7 +24,15 @@ A team planner and showcase maker for Wuthering Waves. Each team holds three res
   | 13 | 3x3 + 2x2 |
 
   Untick **Export** on a team to leave it out. PNG is the default because text and badges stay sharp; JPG produces a smaller file.
-- **Save and import**: teams are kept in the browser automatically. **Save file** downloads a `.json` backup. **Import** accepts that `.json` or an image exported from this site, because exported PNG/JPG files carry their team data inside. Images re-compressed by social media lose that data.
+- **Matrix mode** (switch next to the team count): plans Singularity Expansion runs.
+  - **Owned roster with Vigor**: mark the resonators you own under **Manage**, then drag them from the roster onto any slot, or click one to fill the active team's next empty slot. Each use in a team costs 1 Vigor; supports have 2, and every Rover (both genders, all elements) shares a single Vigor, so a plan holds one Rover in one element. Characters out of Vigor are greyed out and can't be placed. Max Vigor can be changed per character in **Manage**.
+  - **Points and boss progress**: enter each team's points. Following [wuwamatrix.com](https://wuwamatrix.com/)'s point structure, points are spent on the bosses in order (R1 boss 1 to R5 boss 5), carrying on from the teams before, so every team shows the bosses it finishes and the boss it stops at with its HP left. The Matrix Mimic's 1,000-point kill bonus is not counted as damage.
+  - **Plan summary**: total points, rank (from the game's own thresholds) with the points to the next rank, the rank list (B to Crown II) with the ones reached lit, and a ribbon of every round showing which team dealt each boss's points.
+  - **Rank medals**: the game's own medals, kept in `public/ranks/` (`b.png`, `a.png`, `s.png`, `ss.png`, `sss.png`, `crown.png`, `crown2.png`). They aren't on nanoka.cc's asset host, so these copies come from [slyraf.com](https://slyraf.com/en/wuthering-waves/matrix-planner/)'s Matrix planner (converted to 256px PNG). The Vigor icon (`public/icons/vigor.png`) comes from the same place. Replace a file there to change a medal.
+  - **Circuit buffs**: pick a buff per team from a card list with the full buff text and how many other teams use it.
+  - **Matrix plan export**: one PNG/JPG with the total, rank, the round ribbon and every team's buff, points and stopping boss. Like other exports, it carries the teams for import.
+- **Light and dark theme**: the sun/moon button in the top bar switches it; the choice is remembered, and with no choice the system setting is followed. Image exports use the theme on screen.
+- **Save and import**: everything is kept in the browser automatically. **Save** downloads a full `.json` backup: every team (characters, Sequence, weapons and rank, Sonata sets, modes, notes, circuit buffs, points), plus the owned roster, Max Vigor changes, Matrix mode and the export settings. **Import** accepts that `.json` or an image exported from this site, because exported PNG/JPG files carry their team data inside (teams only, not the roster). When a backup is imported, **Also load the roster and Matrix setup** is on by default: **Replace current** takes the saved setup as is, **Add to current** adds the saved owned resonators and Vigor changes to yours. Backups saved before this change hold teams only and still import. Images re-compressed by social media lose their data.
 
 ## Getting started
 
@@ -67,6 +75,21 @@ npm run roster -- --check # report only
 The script reads [encore.moe](https://encore.moe/)'s API. It takes the release order from the in-game `Priority` field and finds dual-mode resonators by looking for "Resonance Mode - …" in their skill text. Lines already in the file are kept as written, so manual edits are not overwritten. When the file and the API disagree, the script lists the difference so you can check it.
 
 The app still shows a resonator that the file doesn't list yet. It goes at the top of the picker, and its modes are detected the same way.
+
+### Matrix: `src/data/matrix.txt`
+
+Names the patch whose tower data (buffs, boss line-up, rank thresholds, enhanced resonators) is loaded from nanoka, and holds the score plan:
+
+```ini
+round = 4680, 4680, 4680, 4680, 6665   # points per boss, one line per round
+mimic_bonus = 1000                     # Matrix Mimic kill bonus
+vigor = Verina : 2                     # Max Vigor (default 1)
+bonus = Hsin                           # this patch's featured resonator: +1 Vigor
+```
+
+Update the `round` lines when a patch changes the point structure, and the `bonus` line for each patch's featured resonator.
+
+To refresh the `round`, `mimic_bonus` and `vigor` lines, open [wuwamatrix.com](https://wuwamatrix.com/), paste [`scripts/wuwamatrix-console.js`](scripts/wuwamatrix-console.js) into the browser console (F12) and press Enter. It prints the lines in this file's format and copies them to the clipboard.
 
 ### Images, weapons and Sonata sets
 
