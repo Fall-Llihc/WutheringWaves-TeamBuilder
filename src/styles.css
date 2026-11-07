@@ -389,6 +389,46 @@ main {
   letter-spacing: 0;
   line-height: 1.1;
 }
+/* Matrix patch in effect (from matrix.txt), under the Teams heading */
+.workspace-head .patch-tag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px 0 2px;
+  padding: 3px 10px 3px 3px;
+  /* a pill on one line, a soft box when it wraps on phones */
+  border-radius: 14px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+.patch-tag > span + span::before {
+  content: '·';
+  margin: 0 7px;
+  color: var(--muted);
+}
+.patch-tag .patch-tag-key {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.patch-tag .patch-tag-key + span::before {
+  content: none;
+}
+.patch-tag .patch-tag-key + span {
+  margin-left: 8px;
+}
 .workspace-head h2 .count {
   margin-left: 6px;
   font-size: 16px;

@@ -24,6 +24,8 @@ import { buildBackup, downloadBlob, parseImportFile, timestamp, type ImportResul
 import { lookupCharacter, useGame } from './lib/game';
 import { MATRIX, useMatrix } from './lib/matrix';
 import { matrixPlacementError } from './lib/matrixHooks';
+import { SCORE_PLAN } from './lib/matrixPlan';
+import { rosterKey } from './lib/roster';
 import { useTheme } from './lib/theme';
 import { useStore, type SlotRef, type Team, type TeamDropMode } from './lib/store';
 
@@ -99,6 +101,7 @@ export default function App() {
   const teams = useStore((s) => s.teams);
   const matrixMode = useStore((s) => s.matrixMode);
   const vigorOverride = useStore((s) => s.vigorOverride);
+  const matrixPhase = useMatrix((s) => s.tower?.phase ?? '');
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
   // Actions never change; reading them without subscribing avoids re-rendering on every edit.
@@ -322,6 +325,10 @@ export default function App() {
   };
 
   const includedCount = teams.filter((t) => t.include).length;
+  // This patch's featured resonators from matrix.txt's bonus lines, by their game name.
+  const bonusNames = SCORE_PLAN.bonus.map(
+    (key) => Object.values(data?.characters ?? {}).find((c) => rosterKey(c.name) === key)?.name ?? key,
+  );
 
   return (
     <>
@@ -370,6 +377,14 @@ export default function App() {
             <h2>
               Teams <span className="mono count">{teams.length}</span>
             </h2>
+            {matrixMode && (
+              <p className="patch-tag" title="Set in src/data/matrix.txt (patch and bonus lines)">
+                <span className="patch-tag-key">Matrix</span>
+                <span>Patch {MATRIX.patch}</span>
+                {matrixPhase ? <span>{matrixPhase}</span> : null}
+                {bonusNames.length ? <span>+1 Vigor: {bonusNames.join(', ')}</span> : null}
+              </p>
+            )}
             <p className="muted">Drag a character onto another slot to move or swap it. Drag a team by its number: drop in the middle of another team to swap, on its edge to place before or after.</p>
           </div>
           <div className="workspace-actions">
