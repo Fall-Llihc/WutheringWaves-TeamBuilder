@@ -15,7 +15,7 @@
 # major once its page is known, e.g. "anchor = 4.0 : 20". The closest
 # anchor at or below the patch, within the same major version, is used.
 
-patch = 3.8
+patch = 3.7
 
 step = 2
 anchor = 3.7 : 16
