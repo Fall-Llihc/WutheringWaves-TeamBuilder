@@ -1,0 +1,20 @@
+# Tower of Adversity.
+#
+# The floors, bosses and buffs come from nanoka's tower pages:
+#   https://ww.nanoka.cc/tower/<cycle>/
+# A cycle lasts `days` days and the cycle number goes up by 1 each time, so
+# the active cycle is counted from one known cycle and its start date. The
+# app then checks the dates in the loaded data, so a wrong anchor corrects
+# itself within a cycle.
+#
+#   anchor = a cycle number : the day it starts (YYYY-MM-DD)
+#   days   = length of one cycle
+#   cost   = cost every resonator has for the whole tower
+#   floors = the floors planned, as area-floor (area 1 Resonant Tower,
+#            2 Hazard Tower, 3 Echoing Tower). Each floor's cost per
+#            resonator comes from the tower data.
+
+anchor = 41 : 2026-10-12
+days = 28
+cost = 10
+floors = 1-4, 2-1, 2-2, 2-3, 2-4, 3-4

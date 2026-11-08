@@ -26,7 +26,19 @@ export interface Team {
   buffId?: string | null;
   /** Matrix points this team scored (or is expected to score). */
   score?: number;
+  /** Tower of Adversity: the floor this team clears, as "area-floor". */
+  floor?: string;
 }
+
+/**
+ * Which planner is open. Each keeps its own teams: the plain builder, Matrix,
+ * and one set of floor teams per Tower of Adversity cycle.
+ */
+export type Mode = 'builder' | 'matrix' | 'tower';
+
+/** Board keys: 'builder', 'matrix', or 'tower:<cycle>'. */
+const BOARD_KEY = /^(builder|matrix|tower:\d+)$/;
+export const boardMode = (board: string): Mode => (board.startsWith('tower:') ? 'tower' : board === 'matrix' ? 'matrix' : 'builder');
 
 export interface SlotRef {
   teamId: string;
@@ -89,9 +101,14 @@ export function sanitizeTeams(input: unknown): Team[] {
       slots,
       buffId: typeof raw.buffId === 'string' ? raw.buffId : null,
       score: clampScore(raw.score),
+      ...(typeof raw.floor === 'string' && /^\d+-\d+$/.test(raw.floor) ? { floor: raw.floor } : {}),
     };
   });
 }
+
+/** Fresh ids and plain copies, for a team taken from one board into another. */
+const cloneTeams = (teams: Team[]): Team[] =>
+  teams.map((t) => ({ ...t, id: uid(), slots: t.slots.map((s) => ({ ...s })) as Team['slots'] }));
 
 /** Matrix points: a whole number from 0 up to a generous ceiling. */
 export const clampScore = (v: unknown) => Math.min(9_999_999, Math.max(0, Math.round(Number(v) || 0)));
@@ -101,9 +118,14 @@ const clampVigor = (v: unknown) => Math.max(1, Math.min(9, Math.round(Number(v) 
 
 const DEFAULT_EXPORT: ExportSettings = { format: 'png', title: '', showNotes: true, showNames: true, showWeapons: true, showEchoes: true, showRanks: true };
 
-/** Everything a full backup holds besides the teams. */
+/** Everything a full backup holds besides the open board's teams. */
 export interface Setup {
   matrixMode: boolean;
+  /** Planner that was open; its teams are the backup's `teams`. */
+  mode?: Mode;
+  board?: string;
+  /** Every other board's teams (builder, Matrix, Tower cycles). */
+  boards?: Record<string, Team[]>;
   owned: Record<string, true>;
   vigorOverride: Record<string, number>;
   exportSettings: ExportSettings;
@@ -133,15 +155,39 @@ export function sanitizeSetup(input: unknown): Setup {
     showRanks: flag(ex.showRanks, DEFAULT_EXPORT.showRanks),
   };
 
-  return { matrixMode: raw.matrixMode === true, owned, vigorOverride, exportSettings };
+  const boards: Record<string, Team[]> = {};
+  if (raw.boards && typeof raw.boards === 'object')
+    for (const [k, v] of Object.entries(raw.boards)) {
+      if (!BOARD_KEY.test(k) || !Array.isArray(v)) continue;
+      try {
+        boards[k] = sanitizeTeams(v);
+      } catch {
+        /* skip a broken board */
+      }
+    }
+  const board = typeof raw.board === 'string' && BOARD_KEY.test(raw.board) ? raw.board : raw.matrixMode === true ? 'matrix' : 'builder';
+
+  return { matrixMode: raw.matrixMode === true, mode: boardMode(board), board, boards, owned, vigorOverride, exportSettings };
 }
 
 interface State {
+  /** The open board's teams. */
   teams: Team[];
   exportSettings: ExportSettings;
-  /** Matrix mode: each team gets a circuit buff, shown in the editor and the team sheet. */
+  mode: Mode;
+  /** Key of the open board ('builder', 'matrix' or 'tower:<cycle>'). */
+  board: string;
+  /** Every board that isn't open, by key. */
+  boards: Record<string, Team[]>;
+  /**
+   * Opens a board: the current teams are put away under their key and the
+   * board's own come back (or `fresh()` the first time).
+   */
+  switchBoard: (board: string, fresh: () => Team[]) => void;
+  /** Matrix mode (mode === 'matrix'): each team gets a circuit buff, shown in the editor and the team sheet. */
   matrixMode: boolean;
-  setMatrixMode: (v: boolean) => void;
+  /** Copies a builder team's line-up and gear into a team of the open board. */
+  applyPreset: (teamId: string, preset: Team, keepName: boolean) => void;
   /** Matrix roster: the characters the player owns (only these can be dragged into teams). */
   owned: Record<string, true>;
   setOwned: (ids: string[], owned: boolean) => void;
@@ -167,9 +213,14 @@ interface State {
   /** Rewrites outdated character ids (old per-element Rover ids, roster-only ids) to current ones. */
   remapCharacters: (resolve: (id: string) => { id: string; mode?: string } | null) => void;
   importTeams: (teams: Team[], mode: 'replace' | 'append') => void;
-  /** Loads a backup's setup: 'replace' takes it as is, 'append' adds its owned roster and overrides to the current ones. */
-  importSetup: (setup: Setup, mode: 'replace' | 'append') => void;
-  resetAll: () => void;
+  /**
+   * Loads a full backup. 'replace' takes its boards, open planner and setup as
+   * saved; 'append' adds its teams to the open board and its owned roster and
+   * Vigor changes to the current ones.
+   */
+  importBackup: (teams: Team[], setup: Setup, mode: 'replace' | 'append') => void;
+  /** Clears the open board; `fresh` gives its empty teams (one team, or the tower floors). */
+  resetAll: (fresh?: Team[]) => void;
   setExportSettings: (patch: Partial<ExportSettings>) => void;
 }
 
@@ -201,8 +252,32 @@ export const useStore = create<State>()(
     (set, get) => ({
       teams: [newTeam(1)],
       exportSettings: { ...DEFAULT_EXPORT },
+      mode: 'builder',
+      board: 'builder',
+      boards: {},
       matrixMode: false,
-      setMatrixMode: (v) => set({ matrixMode: v }),
+      switchBoard: (board, fresh) =>
+        set((st) => {
+          if (board === st.board) return st;
+          const boards = { ...st.boards, [st.board]: st.teams };
+          const teams = boards[board]?.length ? boards[board] : fresh();
+          delete boards[board];
+          const mode = boardMode(board);
+          return { boards, teams, board, mode, matrixMode: mode === 'matrix' };
+        }),
+
+      applyPreset: (teamId, preset, keepName) =>
+        set((st) => ({
+          teams: st.teams.map((t) =>
+            t.id !== teamId
+              ? t
+              : {
+                  ...t,
+                  name: keepName ? t.name : preset.name,
+                  slots: preset.slots.map((s) => ({ ...s })) as Team['slots'],
+                },
+          ),
+        })),
 
       owned: {},
       setOwned: (ids, owned) =>
@@ -368,21 +443,49 @@ export const useStore = create<State>()(
       importTeams: (incoming, mode) =>
         set((st) => ({ teams: mode === 'replace' ? (incoming.length ? incoming : [newTeam(1)]) : [...st.teams, ...incoming] })),
 
-      importSetup: (setup, mode) =>
-        set((st) =>
-          mode === 'replace'
-            ? { ...setup }
-            : {
-                matrixMode: st.matrixMode || setup.matrixMode,
-                owned: { ...st.owned, ...setup.owned },
-                vigorOverride: { ...st.vigorOverride, ...setup.vigorOverride },
-              },
-        ),
+      importBackup: (incoming, setup, mode) =>
+        set((st) => {
+          if (mode === 'append')
+            return {
+              teams: [...st.teams, ...incoming],
+              owned: { ...st.owned, ...setup.owned },
+              vigorOverride: { ...st.vigorOverride, ...setup.vigorOverride },
+            };
+          const board = setup.board ?? (setup.matrixMode ? 'matrix' : 'builder');
+          const boards = { ...(setup.boards ?? {}) };
+          delete boards[board];
+          const boardModeNow = boardMode(board);
+          return {
+            teams: incoming.length ? incoming : [newTeam(1)],
+            board,
+            boards,
+            mode: boardModeNow,
+            matrixMode: boardModeNow === 'matrix',
+            owned: setup.owned,
+            vigorOverride: setup.vigorOverride,
+            exportSettings: setup.exportSettings,
+          };
+        }),
 
-      resetAll: () => set({ teams: [newTeam(1)] }),
+      resetAll: (fresh) => set({ teams: fresh?.length ? fresh : [newTeam(1)] }),
 
       setExportSettings: (patch) => set((st) => ({ exportSettings: { ...st.exportSettings, ...patch } })),
     }),
-    { name: 'wtb:teams', version: 1 },
+    {
+      name: 'wtb:teams',
+      version: 2,
+      // v1 kept one list of teams for both the builder and Matrix. Each planner
+      // now has its own, so that list is copied into both to start them off.
+      migrate: (persisted, version) => {
+        const st = (persisted ?? {}) as Partial<State>;
+        if (version < 2) {
+          const teams = Array.isArray(st.teams) ? st.teams : [newTeam(1)];
+          const board = st.matrixMode ? 'matrix' : 'builder';
+          const other = board === 'matrix' ? 'builder' : 'matrix';
+          return { ...st, teams, board, mode: board, boards: { [other]: cloneTeams(teams) } } as State;
+        }
+        return st as State;
+      },
+    },
   ),
 );

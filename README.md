@@ -24,7 +24,13 @@ A team planner and showcase maker for Wuthering Waves. Each team holds three res
   | 13 | 3x3 + 2x2 |
 
   Untick **Export** on a team to leave it out. PNG is the default because text and badges stay sharp; JPG produces a smaller file.
-- **Matrix mode** (switch next to the team count): plans Singularity Expansion runs.
+- **Three planners, each with its own teams**: **Builder**, **Matrix** and **Tower** (the switch next to the team count). Teams made in one don't appear in the others, so a Matrix or Tower plan never changes your builder teams.
+  - **Builder teams as presets**: in Matrix and Tower, **Preset** on a team loads one of your builder teams into it (line-up and gear). The list checks each one against the plan: a resonator that would go over its Vigor (Matrix) or cost (Tower) is marked with its total, e.g. `2/1` or `14/10`, and one you haven't marked owned is dimmed. Loading is still allowed, and the slot keeps the over-limit mark.
+- **Tower of Adversity**: one team per floor for the floors that matter: Resonant Tower 4, Hazard Tower 1 to 4 and Echoing Tower 4.
+  - **Cost**: every resonator has 10 cost for the whole tower; each floor takes its cost from everyone on it (4 on Resonant and Echoing Tower 4, 5 on each Hazard Tower floor, as the game data gives them). All Rovers share one pool. The roster shows what each resonator has left and locks anyone who can't afford another floor; the summary lists the cost each resonator in the plan has spent.
+  - **Floor info**: beside each floor, its enemies with level and element (an enemy takes less damage from its own element), the recommended elements, and the floor's buffs with element names in their colour.
+  - **Always the current cycle**: the active cycle is worked out from the date and checked against the tower data, so the plan moves on by itself when a new cycle starts. **Next** plans the cycle after it. Each cycle keeps its own floor teams.
+- **Matrix mode**: plans Singularity Expansion runs.
   - **Owned roster with Vigor**: mark the resonators you own under **Manage**, then drag them from the roster onto any slot, or click one to fill the active team's next empty slot. Each use in a team costs 1 Vigor; supports have 2, and every Rover (both genders, all elements) shares a single Vigor, so a plan holds one Rover in one element. Characters out of Vigor are greyed out and can't be placed. Max Vigor can be changed per character in **Manage**.
   - **Points and boss progress**: enter each team's points. Following [wuwamatrix.com](https://wuwamatrix.com/)'s point structure, points are spent on the bosses in order (R1 boss 1 to R5 boss 5), carrying on from the teams before, so every team shows the bosses it finishes and the boss it stops at with its HP left. The Matrix Mimic's 1,000-point kill bonus is not counted as damage.
   - **Plan summary**: total points, rank (from the game's own thresholds) with the points to the next rank, the rank list (B to Crown II) with the ones reached lit, and a ribbon of every round showing which team dealt each boss's points.
@@ -32,7 +38,7 @@ A team planner and showcase maker for Wuthering Waves. Each team holds three res
   - **Circuit buffs**: pick a buff per team from a card list with the full buff text and how many other teams use it.
   - **Matrix plan export**: one PNG/JPG with the total, rank, the round ribbon and every team's buff, points and stopping boss. Like other exports, it carries the teams for import.
 - **Light and dark theme**: the sun/moon button in the top bar switches it; the choice is remembered, and with no choice the system setting is followed. Image exports use the theme on screen.
-- **Save and import**: everything is kept in the browser automatically. **Save** downloads a full `.json` backup: every team (characters, Sequence, weapons and rank, Sonata sets, modes, notes, circuit buffs, points), plus the owned roster, Max Vigor changes, Matrix mode and the export settings. **Import** accepts that `.json` or an image exported from this site, because exported PNG/JPG files carry their team data inside (teams only, not the roster). When a backup is imported, **Also load the roster and Matrix setup** is on by default: **Replace current** takes the saved setup as is, **Add to current** adds the saved owned resonators and Vigor changes to yours. Backups saved before this change hold teams only and still import. Images re-compressed by social media lose their data.
+- **Save and import**: everything is kept in the browser automatically. **Save** downloads a full `.json` backup: every planner's teams (builder, Matrix, each Tower cycle) and every team (characters, Sequence, weapons and rank, Sonata sets, modes, notes, circuit buffs, points), plus the owned roster, Max Vigor changes, Matrix mode and the export settings. **Import** accepts that `.json` or an image exported from this site, because exported PNG/JPG files carry their team data inside (teams only, not the roster). When a backup is imported, **Also load the roster and Matrix setup** is on by default: **Replace current** takes the saved setup as is, **Add to current** adds the saved owned resonators and Vigor changes to yours. Backups saved before this change hold teams only and still import. Images re-compressed by social media lose their data.
 
 ## Getting started
 
@@ -76,6 +82,17 @@ The script reads [encore.moe](https://encore.moe/)'s API. It takes the release o
 
 The app still shows a resonator that the file doesn't list yet. It goes at the top of the picker, and its modes are detected the same way.
 
+### Tower of Adversity: `src/data/tower.txt`
+
+```ini
+anchor = 41 : 2026-10-12   # a known cycle and the day it starts
+days = 28                  # cycle length
+cost = 10                  # cost per resonator for the whole tower
+floors = 1-4, 2-1, 2-2, 2-3, 2-4, 3-4   # area-floor, in display order
+```
+
+The active cycle is counted from the anchor, then checked against the begin/end dates in nanoka's tower data (`ww/<version>/en/tower/<cycle>.json`), so the anchor rarely needs changing. Each floor's cost, enemies and buffs come from that data.
+
 ### Matrix: `src/data/matrix.txt`
 
 Names the patch whose tower data (buffs, boss line-up, rank thresholds, enhanced resonators) is loaded from nanoka, and holds the score plan:
@@ -113,6 +130,8 @@ src/
     game.ts                game-data store, character lookup, modes
     store.ts               team state (zustand, persisted)
     layout.ts              export grid planner
+    tower.ts               Tower of Adversity cycles, floors and cost
+    budget.ts              Vigor (Matrix) or cost (Tower) per resonator
     fileFormat.ts          JSON payload, PNG/JPG embedding and import parsing
 scripts/
   sync-roster.mjs          updates resonators.txt from encore.moe

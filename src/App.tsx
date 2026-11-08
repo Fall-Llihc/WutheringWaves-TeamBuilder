@@ -17,17 +17,20 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Aurora } from './components/Aurora';
 import { MatrixRoster, ROSTER_MAX, ROSTER_MIN } from './components/MatrixRoster';
 import { MatrixSummary } from './components/MatrixSummary';
+import { PresetPicker } from './components/PresetPicker';
+import { TowerFloorPanel, TowerSummary } from './components/Tower';
 import { TeamCard, type DragData, type PickerRequest } from './components/TeamCard';
 import { Icon, Img, Modal, Toast } from './components/ui';
 import { ELEMENTS, UNKNOWN_ID } from './lib/data';
 import { buildBackup, downloadBlob, parseImportFile, timestamp, type ImportResult } from './lib/fileFormat';
 import { lookupCharacter, useGame } from './lib/game';
 import { MATRIX, useMatrix } from './lib/matrix';
-import { matrixPlacementError } from './lib/matrixHooks';
+import { placementError } from './lib/budget';
 import { SCORE_PLAN } from './lib/matrixPlan';
 import { rosterKey } from './lib/roster';
 import { useTheme } from './lib/theme';
-import { useStore, type SlotRef, type Team, type TeamDropMode } from './lib/store';
+import { newTeam, useStore, type Mode, type SlotRef, type Team, type TeamDropMode } from './lib/store';
+import { floorTeams, normalizeFloorTeams, TOWER, towerBoard, useTower } from './lib/tower';
 
 // Dialogs load on first open; the export one pulls in html-to-image.
 const ExportDialog = lazy(() => import('./components/ExportDialog').then((m) => ({ default: m.ExportDialog })));
@@ -100,8 +103,19 @@ export default function App() {
   const { status, error, data, load, fromCache } = useGame();
   const teams = useStore((s) => s.teams);
   const matrixMode = useStore((s) => s.matrixMode);
-  const vigorOverride = useStore((s) => s.vigorOverride);
+  const mode = useStore((s) => s.mode);
+  const board = useStore((s) => s.board);
+  const planner = mode !== 'builder';
+  const tower = mode === 'tower';
   const matrixPhase = useMatrix((s) => s.tower?.phase ?? '');
+  const towerActiveId = useTower((s) => s.activeId);
+  const towerCycles = useTower((s) => s.cycles);
+  const towerStatus = useTower((s) => s.status);
+  // Tower: plan the active cycle or the one after it.
+  const [towerWhich, setTowerWhich] = useState<'current' | 'next'>('current');
+  const towerId = towerWhich === 'current' ? towerActiveId : towerActiveId + 1;
+  const towerCycle = towerCycles[towerId] ?? null;
+  const [presetFor, setPresetFor] = useState<string | null>(null);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
   // Actions never change; reading them without subscribing avoids re-rendering on every edit.
@@ -150,6 +164,26 @@ export default function App() {
   useEffect(() => {
     if (data && matrixMode) useMatrix.getState().load(data.version);
   }, [data, matrixMode]);
+
+  // Tower: find the active cycle (and load the next), then keep the open board on the chosen cycle.
+  useEffect(() => {
+    if (data && tower) useTower.getState().loadActive(data.version);
+  }, [data, tower]);
+  useEffect(() => {
+    if (!tower) return;
+    const want = towerBoard(towerId);
+    if (board !== want) store.switchBoard(want, floorTeams);
+    const st = useStore.getState();
+    if (st.teams.map((t) => t.floor).join() !== TOWER.floors.join()) useStore.setState({ teams: normalizeFloorTeams(st.teams) });
+  }, [tower, towerId, board, store]);
+
+  /** Opens a planner; each keeps its own teams. */
+  const openMode = (m: Mode) => {
+    if (m === mode) return;
+    setActiveTeamId(null);
+    if (m === 'tower') store.switchBoard(towerBoard(towerId), floorTeams);
+    else store.switchBoard(m, () => [newTeam(1)]);
+  };
 
   const notify = useCallback((m: string) => setToast(m), []);
 
@@ -218,7 +252,7 @@ export default function App() {
   /** A roster character onto a slot: checks Vigor and duplicates, then places it. */
   const placeFromRoster = (charId: string, ref: SlotRef) => {
     const st = useStore.getState();
-    const err = matrixPlacementError(data, st.teams, st.vigorOverride, ref.teamId, charId, ref.index);
+    const err = placementError(data, ref.teamId, charId, ref.index);
     if (err) return notify(err);
     const slot = st.teams.find((t) => t.id === ref.teamId)?.slots[ref.index];
     const c = lookupCharacter(data, charId);
@@ -242,6 +276,7 @@ export default function App() {
     if (isFull(team)) {
       const next = nextOpenTeam(teams, team.id);
       if (next) team = teams.find((t) => t.id === next)!;
+      else if (tower) return notify('Every floor is full. Clear a slot to change a floor.');
       else {
         store.addTeam();
         team = useStore.getState().teams.at(-1)!;
@@ -265,22 +300,22 @@ export default function App() {
     if (!picker || !pickerTeam) return;
     if (picker.kind === 'char') {
       const id = ids[0];
-      if (matrixMode && id) {
-        const err = matrixPlacementError(data, teams, vigorOverride, picker.ref.teamId, id, picker.ref.index);
+      if (planner && id) {
+        const err = placementError(data, picker.ref.teamId, id, picker.ref.index);
         if (err) return notify(err);
       }
       const c = lookupCharacter(data, id);
       const prevWeapon = pickerSlot?.weaponId ? data?.weapons[pickerSlot.weaponId] : null;
       store.setCharacter(picker.ref, id, !!(c && prevWeapon && prevWeapon.type === c.weaponType));
     } else if (picker.kind === 'pick3') {
-      if (matrixMode) {
+      if (planner) {
         // The whole line-up is replaced, so check it against the plan without this team's current members.
         const rest = teams.map((t) => (t.id === pickerTeam.id ? { ...t, slots: t.slots.map(() => ({ ...t.slots[0], charId: null })) as Team['slots'] } : t));
         for (const [i, id] of ids.entries()) {
           const trial = rest.map((t) =>
             t.id === pickerTeam.id ? { ...t, slots: t.slots.map((s, k) => (k < i ? { ...s, charId: ids[k] } : s)) as Team['slots'] } : t,
           );
-          const err = matrixPlacementError(data, trial, vigorOverride, pickerTeam.id, id, i);
+          const err = placementError(data, pickerTeam.id, id, i, trial);
           if (err) return notify(err);
         }
       }
@@ -292,19 +327,20 @@ export default function App() {
   /* ---------------- save / load ---------------- */
 
   const saveJson = () => {
-    const { owned, vigorOverride, exportSettings } = useStore.getState();
-    const backup = buildBackup(teams, { matrixMode, owned, vigorOverride, exportSettings });
+    const { owned, vigorOverride, exportSettings, boards } = useStore.getState();
+    const backup = buildBackup(teams, { matrixMode, mode, board, boards, owned, vigorOverride, exportSettings });
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     downloadBlob(blob, `wuwa-teams-${timestamp()}.json`);
-    notify(`Saved ${teams.length} team${teams.length === 1 ? '' : 's'}, ${Object.keys(owned).length} owned resonators and the Matrix setup.`);
+    const all = teams.length + Object.values(boards).reduce((n, b) => n + b.length, 0);
+    notify(`Saved ${all} teams across ${Object.keys(boards).length + 1} planners, ${Object.keys(owned).length} owned resonators and the setup.`);
   };
 
   const finishImport = (mode: 'replace' | 'append') => {
     if (!pendingImport) return;
     const { teams: incoming, setup } = pendingImport;
-    store.importTeams(incoming, mode);
     const withSetup = !!setup && importSetup;
-    if (withSetup) store.importSetup(setup, mode);
+    if (withSetup) store.importBackup(incoming, setup, mode);
+    else store.importTeams(incoming, mode);
     const n = `${incoming.length} team${incoming.length === 1 ? '' : 's'}`;
     notify(`${mode === 'replace' ? 'Loaded' : 'Added'} ${n}${withSetup ? ' with the roster and Matrix setup' : ''}.`);
     setPendingImport(null);
@@ -325,6 +361,21 @@ export default function App() {
   };
 
   const includedCount = teams.filter((t) => t.include).length;
+
+  const presetTeam = presetFor ? teams.find((t) => t.id === presetFor) : null;
+  const applyPreset = (preset: Team, over: Array<{ used: number; max: number } | null>) => {
+    if (!presetTeam) return;
+    store.applyPreset(presetTeam.id, preset, tower);
+    setPresetFor(null);
+    const names = preset.slots
+      .map((s, i) => (over[i] ? `${lookupCharacter(data, s.charId)?.name ?? 'Unknown'} ${over[i]!.used}/${over[i]!.max}` : null))
+      .filter(Boolean);
+    notify(
+      names.length
+        ? `Loaded ${preset.name || 'the preset'}. Over ${tower ? 'cost' : 'Vigor'}: ${names.join(', ')}.`
+        : `Loaded ${preset.name || 'the preset'} into ${presetTeam.name || 'the team'}.`,
+    );
+  };
   // This patch's featured resonators from matrix.txt's bonus lines, by their game name.
   const bonusNames = SCORE_PLAN.bonus.map(
     (key) => Object.values(data?.characters ?? {}).find((c) => rosterKey(c.name) === key)?.name ?? key,
@@ -375,7 +426,7 @@ export default function App() {
         <div className="workspace-head">
           <div>
             <h2>
-              Teams <span className="mono count">{teams.length}</span>
+              {tower ? 'Floors' : 'Teams'} <span className="mono count">{teams.length}</span>
             </h2>
             {matrixMode && (
               <p className="patch-tag" title="Set in src/data/matrix.txt (patch and bonus lines)">
@@ -385,14 +436,34 @@ export default function App() {
                 {bonusNames.length ? <span>+1 Vigor: {bonusNames.join(', ')}</span> : null}
               </p>
             )}
-            <p className="muted">Drag a character onto another slot to move or swap it. Drag a team by its number: drop in the middle of another team to swap, on its edge to place before or after.</p>
+            {tower && (
+              <p className="patch-tag" title="The active cycle comes from src/data/tower.txt, checked against the tower data's dates">
+                <span className="patch-tag-key">Tower</span>
+                <span>Cycle {towerId}</span>
+                <span>{towerWhich === 'current' ? 'Active' : 'Next'}</span>
+                {towerCycle?.end ? <span>{towerWhich === 'current' ? `Ends ${towerCycle.end}` : `Starts ${towerCycle.begin}`}</span> : null}
+              </p>
+            )}
+            <p className="muted">
+              {tower
+                ? 'One team per floor. Drag owned resonators onto a floor; each floor takes its cost from everyone on it, out of 10 each.'
+                : 'Drag a character onto another slot to move or swap it. Drag a team by its number: drop in the middle of another team to swap, on its edge to place before or after.'}
+            </p>
           </div>
           <div className="workspace-actions">
-            <label className="switch" title={`Matrix (patch ${MATRIX.patch}): owned roster with Vigor, circuit buffs and a points plan`}>
-              <input type="checkbox" checked={matrixMode} onChange={(e) => store.setMatrixMode(e.target.checked)} />
-              <span className="switch-track" aria-hidden="true" />
-              <span>Matrix</span>
-            </label>
+            <div className="seg mode-seg" role="tablist" aria-label="Planner">
+              {(
+                [
+                  ['builder', 'Builder', 'users', 'Your own teams, no limits. They also serve as presets in Matrix and Tower.'],
+                  ['matrix', 'Matrix', 'crown', `Matrix (patch ${MATRIX.patch}): owned roster with Vigor, circuit buffs and a points plan`],
+                  ['tower', 'Tower', 'tower', 'Tower of Adversity: one team per floor, 10 cost per resonator'],
+                ] as const
+              ).map(([m, label, icon, title]) => (
+                <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? 'on' : ''} onClick={() => openMode(m)} title={title}>
+                  <Icon name={icon} size={15} /> {label}
+                </button>
+              ))}
+            </div>
             <button className="link" onClick={() => store.setAllIncluded(includedCount !== teams.length)}>
               {includedCount === teams.length ? 'Exclude all from export' : 'Include all in export'}
             </button>
@@ -404,11 +475,11 @@ export default function App() {
                 <button
                   className="btn sm danger"
                   onClick={() => {
-                    store.resetAll();
+                    store.resetAll(tower ? floorTeams() : undefined);
                     setConfirmReset(false);
                   }}
                 >
-                  Clear every team
+                  {tower ? 'Clear every floor' : 'Clear every team'}
                 </button>
                 <button className="btn sm quiet" onClick={() => setConfirmReset(false)}>
                   Cancel
@@ -442,10 +513,10 @@ export default function App() {
           onDragCancel={resetDrag}
         >
           <div
-            className={matrixMode ? 'matrix-layout' : undefined}
-            style={matrixMode ? ({ '--roster-w': `${rosterWidth}px` } as React.CSSProperties) : undefined}
+            className={planner ? 'matrix-layout' : undefined}
+            style={planner ? ({ '--roster-w': `${rosterWidth}px` } as React.CSSProperties) : undefined}
           >
-            {matrixMode && data && (
+            {planner && data && (
               <MatrixRoster
                 teams={teams}
                 activeTeamId={activeTeam?.id ?? null}
@@ -457,6 +528,31 @@ export default function App() {
             )}
             <div className="matrix-main">
               {matrixMode && <MatrixSummary />}
+              {tower && <TowerSummary which={towerWhich} onWhich={setTowerWhich} />}
+              {tower ? (
+                <div className="tower-rows">
+                  {teams.map((t, i) => (
+                    <div className="tower-row" key={t.id}>
+                      <TeamCard
+                        team={t}
+                        index={i}
+                        total={teams.length}
+                        onPicker={setPicker}
+                        dropMode={null}
+                        active={activeTeam?.id === t.id}
+                        flash={flashTeamId === t.id}
+                        onActivate={setActiveTeamId}
+                        onPreset={setPresetFor}
+                        floor={{ key: t.floor ?? '', data: (t.floor && towerCycle?.floors[t.floor]) || null }}
+                      />
+                      <TowerFloorPanel
+                        floor={(t.floor && towerCycle?.floors[t.floor]) || null}
+                        loading={!towerCycle && towerStatus[towerId] !== 'error'}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="teams">
                 {teams.map((t, i) => (
                   <TeamCard
@@ -469,6 +565,7 @@ export default function App() {
                     active={matrixMode && activeTeam?.id === t.id}
                     flash={flashTeamId === t.id}
                     onActivate={matrixMode ? setActiveTeamId : undefined}
+                    onPreset={matrixMode ? setPresetFor : undefined}
                   />
                 ))}
                 <button className="add-team" onClick={store.addTeam}>
@@ -476,6 +573,7 @@ export default function App() {
                   <span>New team</span>
                 </button>
               </div>
+              )}
             </div>
           </div>
           <DragOverlay dropAnimation={null}>
@@ -545,6 +643,7 @@ export default function App() {
       )}
 
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} notify={notify} />}
+      {presetTeam && <PresetPicker teamId={presetTeam.id} onPick={(p, c) => applyPreset(p, c.over)} onClose={() => setPresetFor(null)} />}
       </Suspense>
 
       {pendingImport && (
@@ -572,15 +671,18 @@ export default function App() {
               <label className="switch">
                 <input type="checkbox" checked={importSetup} onChange={(e) => setImportSetup(e.target.checked)} />
                 <span className="switch-track" aria-hidden="true" />
-                <span>Also load the roster and Matrix setup</span>
+                <span>Also load the other planners, the roster and setup</span>
               </label>
               <p className="muted">
                 {Object.keys(pendingImport.setup.owned).length} owned resonators
                 {Object.keys(pendingImport.setup.vigorOverride).length
                   ? ` · ${Object.keys(pendingImport.setup.vigorOverride).length} Max Vigor change${Object.keys(pendingImport.setup.vigorOverride).length === 1 ? '' : 's'}`
                   : ''}
-                {' · '}Matrix mode {pendingImport.setup.matrixMode ? 'on' : 'off'} · export settings. Replace takes them as saved; Add to current
-                adds the owned resonators and Vigor changes to yours.
+                {pendingImport.setup.boards && Object.keys(pendingImport.setup.boards).length
+                  ? ` · ${Object.keys(pendingImport.setup.boards).length + 1} planners (builder, Matrix, Tower)`
+                  : ''}
+                {' · '}export settings. Replace takes everything as saved; Add to current adds these teams to the open planner and the
+                owned resonators and Vigor changes to yours.
               </p>
             </div>
           )}

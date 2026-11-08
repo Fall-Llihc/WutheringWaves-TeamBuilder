@@ -22,8 +22,8 @@ anchor = 3.7 : 16
 
 # ---------------------------------------------------------------------------
 # Score plan (Matrix mode)
-#
-# round = points of each boss in that round, boss 1 to boss 5 (the 5th is the
+    #
+    # round = points of each boss in that round, boss 1 to boss 5 (the 5th is the
 #         round's last boss). One line per round, in order. A team's score is
 #         spent on the bosses in this order: R1 boss 1, R1 boss 2, ... R5 boss 5.
 #         Numbers from wuwamatrix.com's point structure for patch 3.7.

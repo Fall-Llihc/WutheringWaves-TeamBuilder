@@ -2,7 +2,9 @@ import { useDraggable } from '@dnd-kit/core';
 import { memo, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ELEMENTS, WEAPON_TYPES, type Character } from '../lib/data';
 import { useGame } from '../lib/game';
-import { useEnhanced, useVigor, type VigorInfo } from '../lib/matrixHooks';
+import { useBudget, type Budget } from '../lib/budget';
+import { useEnhanced } from '../lib/matrixHooks';
+import { TOWER } from '../lib/tower';
 import { isRover, vigorGroup } from '../lib/matrixPlan';
 import { useStore, type Team } from '../lib/store';
 import { ElementIcon, Icon, Img, VigorIcon } from './ui';
@@ -18,11 +20,32 @@ export interface RosterDragData {
   charId: string;
 }
 
-/** Vigor as pips: filled = left to use. */
-export function VigorPips({ v, compact }: { v: VigorInfo; compact?: boolean }) {
+/**
+ * What a resonator has left: Vigor as pips (filled = left to use), Tower cost
+ * as a bar out of 10.
+ */
+export function BudgetMeter({ v, compact }: { v: Budget; compact?: boolean }) {
+  const out = v.left < v.step;
+  const state = out ? 'out' : v.left < v.max ? 'part' : 'full';
+  if (v.kind === 'cost') {
+    return (
+      <span
+        className={`vigor cost ${state} ${compact ? 'compact' : ''}`}
+        title={`Cost ${v.left}/${v.max} left${out ? ': not enough for another floor' : ''}`}
+      >
+        <VigorIcon size={13} />
+        <span className="cost-bar" aria-hidden="true">
+          <i style={{ transform: `scaleX(${v.left / v.max})` }} />
+        </span>
+        <span className="mono">
+          {v.left}/{v.max}
+        </span>
+      </span>
+    );
+  }
   return (
     <span
-      className={`vigor ${v.left === 0 ? 'out' : v.left < v.max ? 'part' : 'full'} ${compact ? 'compact' : ''}`}
+      className={`vigor ${state} ${compact ? 'compact' : ''}`}
       title={`Vigor ${v.left}/${v.max}: usable in ${v.left} more team${v.left === 1 ? '' : 's'}`}
     >
       <VigorIcon size={13} />
@@ -47,11 +70,12 @@ const RosterTile = memo(function RosterTile({
   onAdd,
 }: {
   char: Character;
-  vigor: VigorInfo;
+  vigor: Budget;
   enhanced: string | undefined;
   onAdd: (id: string) => void;
 }) {
-  const out = vigor.left === 0;
+  const out = vigor.left < vigor.step;
+  const unit = vigor.kind === 'cost' ? 'Cost' : 'Vigor';
   const drag = useDraggable({ id: `roster:${char.id}`, data: { type: 'roster', charId: char.id } satisfies RosterDragData, disabled: out });
   return (
     <button
@@ -63,8 +87,8 @@ const RosterTile = memo(function RosterTile({
       style={{ '--el': ELEMENTS[char.element]?.color ?? 'transparent' } as React.CSSProperties}
       onClick={() => !out && onAdd(char.id)}
       aria-disabled={out}
-      aria-label={`${char.name}, Vigor ${vigor.left} of ${vigor.max}${out ? ', none left' : '. Click to add to the active team, or drag onto a slot'}`}
-      title={out ? `${char.name}: no Vigor left` : `${char.name}: click to add, or drag onto a slot`}
+      aria-label={`${char.name}, ${unit} ${vigor.left} of ${vigor.max}${out ? ', not enough left' : '. Click to add to the active team, or drag onto a slot'}`}
+      title={out ? `${char.name}: not enough ${unit} left` : `${char.name}: click to add, or drag onto a slot`}
     >
       <span className="r-art">
         {char.portrait ? <Img src={char.icon || char.portrait} alt="" /> : <span className="unknown-mark initial">{char.name[0]}</span>}
@@ -80,12 +104,14 @@ const RosterTile = memo(function RosterTile({
         ) : null}
       </span>
       <span className="r-name">{isRover(char.id) ? char.name.replace(/^Rover\s*/i, 'Rover ').trim() : char.name}</span>
-      <VigorPips v={vigor} compact />
+      <BudgetMeter v={vigor} compact />
     </button>
   );
 });
 
 type Tab = 'owned' | 'manage';
+
+const NO_ENHANCED = new Map<string, string>();
 
 /**
  * Matrix roster: the characters the player owns, with Vigor left. Owned
@@ -136,8 +162,12 @@ export function MatrixRoster({
   const setOwned = useStore((s) => s.setOwned);
   const overrides = useStore((s) => s.vigorOverride);
   const setVigorOverride = useStore((s) => s.setVigorOverride);
-  const vigorFor = useVigor();
-  const enhanced = useEnhanced();
+  const mode = useStore((s) => s.mode);
+  const budget = useBudget();
+  const vigorFor = budget ?? (() => ({ kind: 'vigor' as const, max: 1, used: 0, left: 1, step: 1 }));
+  const matrixEnhanced = useEnhanced();
+  // Enhanced resonators are a Matrix thing; the Tower has none.
+  const enhanced = mode === 'matrix' ? matrixEnhanced : NO_ENHANCED;
   const ownedCount = Object.keys(owned).length;
   const [tab, setTab] = useState<Tab>(ownedCount ? 'owned' : 'manage');
   const [q, setQ] = useState('');
@@ -159,7 +189,7 @@ export function MatrixRoster({
   const activeIndex = teams.findIndex((t) => t.id === activeTeamId);
 
   return (
-    <aside className="roster" aria-label="Matrix roster">
+    <aside className="roster" aria-label="Roster">
       <div className="roster-head">
         <div className="roster-title">
           <span className="eyebrow">Roster</span>
@@ -249,7 +279,9 @@ export function MatrixRoster({
       {tab === 'manage' ? (
         <>
           <div className="roster-bulk">
-            <span className="muted">Tap to mark owned. The number is Max Vigor; tap it to change.</span>
+            <span className="muted">
+              {mode === 'matrix' ? 'Tap to mark owned. The number is Max Vigor; tap it to change.' : 'Tap to mark the resonators you own.'}
+            </span>
             <span className="row-gap">
               <button className="btn sm quiet" onClick={() => setOwned(list.map((c) => c.id), true)}>
                 All
@@ -275,6 +307,7 @@ export function MatrixRoster({
                     </span>
                     <span className="r-name">{c.name}</span>
                   </button>
+                  {mode === 'matrix' && (
                   <button
                     type="button"
                     className={`m-vigor ${overrides[group] ? 'custom' : ''}`}
@@ -289,6 +322,7 @@ export function MatrixRoster({
                     <VigorIcon size={13} />
                     <span className="mono">{v.max}</span>
                   </button>
+                  )}
                 </div>
               );
             })}
@@ -331,7 +365,10 @@ export function MatrixRoster({
       />
 
       <p className="roster-foot muted">
-        <VigorIcon size={13} /> Vigor: each use in a team costs 1. All Rovers share one.
+        <VigorIcon size={13} />{' '}
+        {mode === 'tower'
+          ? `Cost: every resonator has ${TOWER.cost}; each floor takes its cost. All Rovers share one pool.`
+          : 'Vigor: each use in a team costs 1. All Rovers share one.'}
         {enhanced.size ? (
           <>
             {' '}

@@ -2,14 +2,16 @@
  * Save / load formats.
  *
  * - .json: a full backup. The teams (characters, Sequence, weapons, Sonata
- *   sets, notes, circuit buffs, points) plus the setup around them: Matrix
- *   mode, the owned roster, Max Vigor overrides and the export settings.
+ *   sets, notes, circuit buffs, points) of every planner (builder, Matrix,
+ *   each Tower of Adversity cycle), plus the setup around them: the open
+ *   planner, the owned roster, Max Vigor overrides and the export settings.
  * - .png / .jpg: the exported image carries the teams only, inside the file
  *   (a PNG tEXt chunk or JPEG comment segments), so an exported image can be
  *   imported back. Sites that re-compress images (most social media) strip
  *   this data; the original file keeps it.
  *
- * Files from before the setup was saved (v1) hold teams only and still load.
+ * Files from before the setup was saved (v1) hold teams only and still load;
+ * v2 files have the setup but one board.
  */
 import { sanitizeSetup, sanitizeTeams, type Setup, type Team } from './store';
 
@@ -26,9 +28,10 @@ interface Payload {
   setup?: SavedSetup;
 }
 
-/** Setup as written to file: the owned roster as a sorted id list. */
-interface SavedSetup extends Omit<Setup, 'owned'> {
+/** Setup as written to file: the owned roster as a sorted id list, boards without team ids. */
+interface SavedSetup extends Omit<Setup, 'owned' | 'boards'> {
   owned: string[];
+  boards?: Record<string, Array<Omit<Team, 'id'>>>;
 }
 
 export interface ImportResult {
@@ -44,14 +47,18 @@ export function buildPayload(teams: Team[]): Payload {
   return { app: APP, v: 1, teams: stripIds(teams) };
 }
 
-/** Full backup for Save file: teams plus roster, Matrix setup and export settings. */
+/**
+ * Full backup for Save: the open board's teams, every other board (builder,
+ * Matrix, Tower cycles), the roster, Matrix setup and export settings.
+ */
 export function buildBackup(teams: Team[], setup: Setup): Payload {
+  const boards = Object.fromEntries(Object.entries(setup.boards ?? {}).map(([k, v]) => [k, stripIds(v)]));
   return {
     app: APP,
-    v: 2,
+    v: 3,
     savedAt: new Date().toISOString(),
     teams: stripIds(teams),
-    setup: { ...setup, owned: Object.keys(setup.owned).sort() },
+    setup: { ...setup, owned: Object.keys(setup.owned).sort(), boards },
   };
 }
 
