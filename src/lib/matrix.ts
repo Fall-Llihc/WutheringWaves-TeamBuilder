@@ -45,9 +45,15 @@ interface Patch {
   minor: number;
 }
 
-export interface MatrixConfig {
+/** One planned cycle: a patch and its nanoka page. */
+export interface MatrixCycle {
   patch: string;
   page: number;
+}
+
+export interface MatrixConfig extends MatrixCycle {
+  /** The patch after `patch` in matrix.txt's list, if any. */
+  next: MatrixCycle | null;
 }
 
 const parsePatch = (s: string): Patch | null => {
@@ -55,11 +61,20 @@ const parsePatch = (s: string): Patch | null => {
   return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
 };
 
+const patchKey = (p: Patch) => p.major * 1000 + p.minor;
+
+/**
+ * Reads matrix.txt. With a `patches` list, pages are counted along it from the
+ * anchor (each patch adds `step` pages), and the next cycle is the list's
+ * following patch. Without one, the old rule applies: count by minor version
+ * from an anchor in the same major, and the next patch is minor + 1.
+ */
 export function parseMatrixConfig(text: string): MatrixConfig {
   let patch: Patch | null = null;
   let patchText = '';
   let step = 2;
-  const anchors: Array<Patch & { page: number }> = [];
+  let order: string[] = [];
+  const anchors: Array<Patch & { text: string; page: number }> = [];
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/#.*/, '').trim();
@@ -70,25 +85,49 @@ export function parseMatrixConfig(text: string): MatrixConfig {
     if (key === 'patch') {
       patch = parsePatch(value);
       patchText = value;
+    } else if (key === 'patches') {
+      order = value.split(',').map((v) => v.trim()).filter((v) => parsePatch(v));
     } else if (key === 'step') {
       step = Number(value) || step;
     } else if (key === 'anchor') {
       const [p, page] = value.split(':');
       const at = parsePatch(p ?? '');
-      if (at && Number(page)) anchors.push({ ...at, page: Number(page) });
+      if (at && Number(page)) anchors.push({ ...at, text: (p ?? '').trim(), page: Number(page) });
     }
   }
 
   if (!patch) throw new Error('matrix.txt: no valid "patch = X.Y" line.');
   const p = patch;
+
+  if (order.length) {
+    // Keep the list in version order even if typed out of order, and make sure the patch is in it.
+    const list = [...new Set([...order, patchText])].sort((x, y) => patchKey(parsePatch(x)!) - patchKey(parsePatch(y)!));
+    const anchor = anchors.find((a) => list.includes(a.text));
+    if (!anchor) throw new Error('matrix.txt: the anchor patch must be in the "patches" list.');
+    const pageOf = (v: string) => anchor.page + step * (list.indexOf(v) - list.indexOf(anchor.text));
+    const at = list.indexOf(patchText);
+    const nextText = list[at + 1];
+    return { patch: patchText, page: pageOf(patchText), next: nextText ? { patch: nextText, page: pageOf(nextText) } : null };
+  }
+
   const sameMajor = anchors.filter((a) => a.major === p.major).sort((a, b) => a.minor - b.minor);
   if (!sameMajor.length) throw new Error(`matrix.txt: no anchor for patch ${p.major}.x.`);
   // Closest anchor at or below the patch; otherwise the lowest one above it.
   const anchor = [...sameMajor].reverse().find((a) => a.minor <= p.minor) ?? sameMajor[0];
-  return { patch: patchText, page: anchor.page + step * (p.minor - anchor.minor) };
+  const page = anchor.page + step * (p.minor - anchor.minor);
+  return { patch: patchText, page, next: { patch: `${p.major}.${p.minor + 1}`, page: page + step } };
 }
 
 export const MATRIX = parseMatrixConfig(matrixText);
+
+/** Board key the store keeps a Matrix cycle's teams under. */
+export const matrixBoard = (page: number) => `matrix:${page}`;
+/** Patch of a page among the planned cycles. */
+export const patchOfPage = (page: number) => (page === MATRIX.next?.page ? MATRIX.next.patch : MATRIX.patch);
+/** Page of the open Matrix board, or the active cycle's. */
+export const boardPage = (board: string) => (board.startsWith('matrix:') ? Number(board.slice(7)) || MATRIX.page : MATRIX.page);
+/** Whether the open board plans the next cycle. */
+export const isNextBoard = (board: string) => !!MATRIX.next && boardPage(board) === MATRIX.next.page;
 
 export const towerPageUrl = (page: number) => `https://ww.nanoka.cc/newtower/${page}/`;
 
@@ -106,7 +145,7 @@ async function fetchTower(page: number, versions: string[]): Promise<MatrixTower
       const raw: any = await res.json();
       return {
         page,
-        patch: MATRIX.patch,
+        patch: patchOfPage(page),
         name: raw.name ?? '',
         phase: raw.cycle?.name ?? '',
         buffs: Object.entries<any>(raw.buffs ?? {}).map(([id, b]) => ({
@@ -142,39 +181,77 @@ async function fetchTower(page: number, versions: string[]): Promise<MatrixTower
 const fillParams = (desc: string, params: string[]) => desc.replace(/\{(\d+)\}/g, (_, i) => params[Number(i)] ?? '');
 
 interface MatrixState {
+  /** Page shown (the active cycle, or the next one). */
+  page: number;
+  /** That page's data. */
   tower: MatrixTower | null;
+  towers: Record<number, MatrixTower>;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
-  load: (dataVersion: string) => Promise<void>;
+  /** Pages nanoka doesn't have yet. */
+  missing: Record<number, true>;
+  /** Shows a page, loading it (cached copy first) when needed. */
+  select: (page: number, dataVersion: string) => Promise<void>;
+  /** Loads a page in the background (to know whether the next cycle is out). */
+  prefetch: (page: number, dataVersion: string) => Promise<void>;
 }
 
-export const useMatrix = create<MatrixState>()((set, get) => ({
-  tower: null,
-  status: 'idle',
-  error: null,
-  load: async (dataVersion) => {
-    if (get().status === 'loading' || get().tower?.page === MATRIX.page) return;
+const loading = new Set<number>();
+
+export const useMatrix = create<MatrixState>()((set, get) => {
+  const fetchPage = async (page: number, dataVersion: string) => {
+    if (loading.has(page)) return;
+    loading.add(page);
     try {
-      const cached = localStorage.getItem(cacheKey(MATRIX.page));
-      if (cached) set({ tower: JSON.parse(cached), status: 'ready' });
-    } catch {
-      /* no cache */
-    }
-    set({ status: 'loading', error: null });
-    try {
-      const tower = await fetchTower(MATRIX.page, [...new Set([dataVersion, MATRIX.patch])]);
+      const tower = await fetchTower(page, [...new Set([dataVersion, patchOfPage(page)])]);
       try {
-        localStorage.setItem(cacheKey(MATRIX.page), JSON.stringify(tower));
+        localStorage.setItem(cacheKey(page), JSON.stringify(tower));
       } catch {
         /* storage full */
       }
-      set({ tower, status: 'ready' });
+      set((st) => ({
+        towers: { ...st.towers, [page]: tower },
+        ...(st.page === page ? { tower, status: 'ready' as const, error: null } : {}),
+      }));
     } catch (e) {
-      // Keep a cached copy usable if the refresh fails.
-      set((st) => ({ status: st.tower ? 'ready' : 'error', error: e instanceof Error ? e.message : String(e) }));
+      const msg = e instanceof Error ? e.message : String(e);
+      set((st) => ({
+        missing: st.towers[page] ? st.missing : { ...st.missing, [page]: true },
+        // Keep a cached copy usable if the refresh fails.
+        ...(st.page === page ? { status: st.towers[page] ? ('ready' as const) : ('error' as const), error: msg } : {}),
+      }));
+    } finally {
+      loading.delete(page);
     }
-  },
-}));
+  };
+  const fromCache = (page: number) => {
+    if (get().towers[page]) return;
+    try {
+      const cached = localStorage.getItem(cacheKey(page));
+      if (cached) set((st) => ({ towers: { ...st.towers, [page]: JSON.parse(cached) } }));
+    } catch {
+      /* no cache */
+    }
+  };
+  return {
+    page: MATRIX.page,
+    tower: null,
+    towers: {},
+    status: 'idle',
+    error: null,
+    missing: {},
+    select: async (page, dataVersion) => {
+      fromCache(page);
+      const have = get().towers[page] ?? null;
+      set({ page, tower: have, status: have ? 'ready' : 'loading', error: null });
+      await fetchPage(page, dataVersion);
+    },
+    prefetch: async (page, dataVersion) => {
+      fromCache(page);
+      if (!get().towers[page]) await fetchPage(page, dataVersion);
+    },
+  };
+});
 
 export function findBuff(tower: MatrixTower | null, id: string | null): MatrixBuff | null {
   if (!tower || !id) return null;

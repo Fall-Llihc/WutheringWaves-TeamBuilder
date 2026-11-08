@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
-import { MATRIX, towerPageUrl, useMatrix, type MatrixBoss } from '../lib/matrix';
-import { useRuns, useVigor } from '../lib/matrixHooks';
-import { FALLBACK_RANKS, planMax, RANK_LABELS, rankOf, SCORE_PLAN, type TeamRun } from '../lib/matrixPlan';
+import { MATRIX, patchOfPage, towerPageUrl, useMatrix, type MatrixBoss } from '../lib/matrix';
+import { mimicOf, useRuns, useVigor } from '../lib/matrixHooks';
+import { bossPool, FALLBACK_RANKS, planMax, RANK_LABELS, rankOf, runTotal, SCORE_PLAN, type TeamRun } from '../lib/matrixPlan';
 import { lookupCharacter, useGame } from '../lib/game';
 import { useStore, type Team } from '../lib/store';
 import { fmt, pct } from './MatrixTeam';
 import { RankIcon, RankLadder } from './RankIcon';
-import { Img, VigorIcon } from './ui';
+import { Icon, Img, VigorIcon } from './ui';
 
 /** One colour per team in the run ribbon; cycles after eight. */
 export const TEAM_COLORS = ['#b73a3a', '#3f6e8c', '#c08a3e', '#5b8a6b', '#7d5ba6', '#a8576f', '#4d7f86', '#8a7a4a'];
@@ -18,11 +18,12 @@ interface Segment {
   to: number;
 }
 
-/** Each boss's points split into the teams that dealt them. */
-export function ribbon(runs: TeamRun[]) {
+/** Each boss's HP (its damage pool) split into the teams that dealt it. */
+export function ribbon(runs: TeamRun[], isMimic: (boss: number) => boolean) {
   let cum = 0;
-  return SCORE_PLAN.rounds.map((round) =>
-    round.map((pts) => {
+  return SCORE_PLAN.rounds.map((round, r) =>
+    round.map((_, b) => {
+      const pts = bossPool(SCORE_PLAN, r, b, isMimic);
       const start = cum;
       cum += pts;
       const segs: Segment[] = [];
@@ -41,12 +42,26 @@ export function ribbon(runs: TeamRun[]) {
  * Only the rounds reached so far are shown: up to the round with the boss
  * still being fought (all of them once the run is cleared).
  */
-export function RunRibbon({ runs, bosses, names }: { runs: TeamRun[]; bosses: MatrixBoss[] | undefined; names: string[] }) {
+/**
+ * `names` and `colors` are per run (active team). `colors` holds each one's place
+ * among all teams, so a team keeps its colour when another is switched off.
+ */
+export function RunRibbon({
+  runs,
+  bosses,
+  names,
+  colors,
+}: {
+  runs: TeamRun[];
+  bosses: MatrixBoss[] | undefined;
+  names: string[];
+  colors?: number[];
+}) {
   const rows = useMemo(() => {
-    const all = ribbon(runs);
+    const all = ribbon(runs, mimicOf(bosses));
     const current = all.findIndex((row) => row.some((c) => c.filled < 1 - 1e-9));
     return current === -1 ? all : all.slice(0, current + 1);
-  }, [runs]);
+  }, [runs, bosses]);
   return (
     <div className="ribbon" role="img" aria-label="Boss progress by round">
       {rows.map((row, r) => {
@@ -65,9 +80,12 @@ export function RunRibbon({ runs, bosses, names }: { runs: TeamRun[]; bosses: Ma
                 return (
                   <span key={b} className={`ribbon-cell ${cell.filled >= 1 - 1e-9 ? 'dead' : cell.filled > 0 ? 'hit' : ''}`} title={tip}>
                     {cell.segs.map((s, k) => (
-                      <i key={k} style={{ left: `${s.from * 100}%`, width: `${(s.to - s.from) * 100}%`, background: teamColor(s.team) }} />
+                      <i key={k} style={{ left: `${s.from * 100}%`, width: `${(s.to - s.from) * 100}%`, background: teamColor(colors?.[s.team] ?? s.team) }} />
                     ))}
                     {boss?.icon ? <Img src={boss.icon} alt="" eager className="ribbon-boss" /> : null}
+                    {cell.filled >= 1 - 1e-9 && mimicOf(bosses)(b) && SCORE_PLAN.mimicBonus > 0 ? (
+                      <span className="ribbon-bonus mono">+{fmt(SCORE_PLAN.mimicBonus)}</span>
+                    ) : null}
                   </span>
                 );
               })}
@@ -96,20 +114,31 @@ function useVigorIssues(teams: Team[]) {
   }, [teams, data, vigorFor]);
 }
 
-/** Matrix overview above the teams: total, rank, the run so far, and Vigor problems. */
-export function MatrixSummary() {
-  const teams = useStore((s) => s.teams);
+/**
+ * Matrix overview above the teams: which cycle (the active patch or the next),
+ * total, rank, the run so far, and Vigor problems.
+ */
+export function MatrixSummary({ which, onWhich }: { which: 'current' | 'next'; onWhich: (w: 'current' | 'next') => void }) {
+  const page = useMatrix((s) => s.page);
+  const nextMissing = useMatrix((s) => !!MATRIX.next && !!s.missing[MATRIX.next.page] && !s.towers[MATRIX.next.page]);
+  const allTeams = useStore((s) => s.teams);
   const tower = useMatrix((s) => s.tower);
   const error = useMatrix((s) => s.error);
-  const { runs } = useRuns();
+  // Only active teams count; extra ones are left out of the total, the ribbon and the legend.
+  const { runs, teams, byTeam } = useRuns();
+  const extra = allTeams.length - teams.length;
   const issues = useVigorIssues(teams);
-  const total = runs.at(-1)?.end ?? 0;
+  const total = runTotal(runs);
+  const bonus = runs.reduce((n, r) => n + r.bonus, 0);
   const thresholds = tower?.ranks?.length ? tower.ranks : FALLBACK_RANKS;
   const rank = rankOf(total, thresholds);
   const toNext = rank.next === null ? 0 : rank.next - total;
   const span = rank.next === null ? 1 : (total - rank.floor) / (rank.next - rank.floor);
   const max = planMax();
-  const names = teams.map((t, i) => t.name || `Team ${i + 1}`);
+  // Colours and default names follow each team's place among all teams, extras included.
+  const place = (id: string) => allTeams.findIndex((t) => t.id === id);
+  const names = teams.map((t) => t.name || `Team ${place(t.id) + 1}`);
+  const colors = teams.map((t) => place(t.id));
   const scored = teams.filter((t) => (t.score ?? 0) > 0).length;
 
   return (
@@ -119,7 +148,7 @@ export function MatrixSummary() {
           <span className="eyebrow">Total points</span>
           <strong className="mono">{fmt(total)}</strong>
           <span className="muted">
-            {scored}/{teams.length} teams scored · max {fmt(max)}
+            {scored}/{teams.length} teams scored{extra ? ` · ${extra} extra not counted` : ''}{bonus ? ` · incl. +${fmt(bonus)} Mimic bonus` : ''} · max {fmt(max)}
           </span>
         </div>
 
@@ -148,29 +177,56 @@ export function MatrixSummary() {
         </div>
 
         <div className="mx-meta">
+          {MATRIX.next && (
+            <div className="seg tw-switch" role="tablist" aria-label="Matrix cycle">
+              <button role="tab" aria-selected={which === 'current'} className={which === 'current' ? 'on' : ''} onClick={() => onWhich('current')}>
+                <span className="tw-dot live" aria-hidden="true" /> {MATRIX.patch}
+              </button>
+              <button
+                role="tab"
+                aria-selected={which === 'next'}
+                className={which === 'next' ? 'on' : ''}
+                onClick={() => onWhich('next')}
+                title={nextMissing ? `Patch ${MATRIX.next.patch} (page ${MATRIX.next.page}) isn't on nanoka yet` : `Plan patch ${MATRIX.next.patch}`}
+              >
+                <Icon name="hourglass" size={14} /> {MATRIX.next.patch}
+              </button>
+            </div>
+          )}
           <span>
-            Matrix · patch {MATRIX.patch}
+            Matrix · patch {patchOfPage(page)}
             {tower?.phase ? ` · ${tower.phase}` : ''}
           </span>
-          <a href={towerPageUrl(MATRIX.page)} target="_blank" rel="noreferrer">
+          <a href={towerPageUrl(page)} target="_blank" rel="noreferrer">
             Tower data
           </a>
-          {error && !tower ? <span className="error-text">{error}</span> : null}
+          {error && !tower ? (
+            <span className="error-text">
+              {which === 'next' && nextMissing ? `Patch ${patchOfPage(page)} isn't on nanoka yet; plan with names only.` : error}
+            </span>
+          ) : null}
         </div>
       </div>
 
       <RankLadder tier={rank.tier} thresholds={thresholds} />
 
-      <RunRibbon runs={runs} bosses={tower?.bosses} names={names} />
+      <RunRibbon runs={runs} bosses={tower?.bosses} names={names} colors={colors} />
 
       <div className="mx-legend">
-        {teams.map((t, i) => (
-          <span key={t.id} className={`mx-legend-item ${(t.score ?? 0) > 0 ? '' : 'idle'}`}>
-            <i style={{ background: teamColor(i) }} />
-            <span>{names[i]}</span>
-            <span className="mono muted">{fmt(t.score ?? 0)}</span>
-          </span>
-        ))}
+        {allTeams.map((t, i) => {
+          const run = byTeam.get(t.id);
+          return (
+            <span
+              key={t.id}
+              className={`mx-legend-item ${!t.include ? 'extra' : (t.score ?? 0) > 0 ? '' : 'idle'}`}
+              title={!t.include ? 'Extra team: not counted' : run?.bonus ? `incl. +${fmt(run.bonus)} Mimic bonus` : undefined}
+            >
+              <i style={{ background: teamColor(i) }} />
+              <span>{t.name || `Team ${i + 1}`}</span>
+              <span className="mono muted">{!t.include ? 'extra' : fmt((t.score ?? 0) + (run?.bonus ?? 0))}</span>
+            </span>
+          );
+        })}
       </div>
 
       {issues.length > 0 && (

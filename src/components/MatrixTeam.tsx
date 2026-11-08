@@ -1,21 +1,36 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { findBuff, useMatrix, type MatrixBoss, type MatrixBuff } from '../lib/matrix';
-import { useRuns } from '../lib/matrixHooks';
-import type { BossPoint, Progress, TeamRun } from '../lib/matrixPlan';
+import { ELEMENTS } from '../lib/data';
+import { useResistClashes, useRuns, type ResistClash } from '../lib/matrixHooks';
+import { SCORE_PLAN, type BossPoint, type Progress, type TeamRun } from '../lib/matrixPlan';
 import { clampScore, useStore, type Team } from '../lib/store';
-import { Icon, Img } from './ui';
+import { ElementIcon, Icon, Img } from './ui';
 
 const nf = new Intl.NumberFormat('en-US');
 export const fmt = (n: number) => nf.format(Math.round(n));
 
 export const bossOf = (bosses: MatrixBoss[] | undefined, boss: number): MatrixBoss | null => bosses?.[boss] ?? null;
 
-/** Boss portrait with its round number. */
-export function BossFace({ bosses, at, size = 34 }: { bosses: MatrixBoss[] | undefined; at: BossPoint; size?: number }) {
+/** Boss portrait with its round number; `resisted` rings it when a team member's element is resisted there. */
+export function BossFace({
+  bosses,
+  at,
+  size = 34,
+  resisted,
+}: {
+  bosses: MatrixBoss[] | undefined;
+  at: BossPoint;
+  size?: number;
+  resisted?: string;
+}) {
   const b = bossOf(bosses, at.boss);
   return (
-    <span className="boss-face" style={{ width: size, height: size }} title={`R${at.round} · ${b?.name ?? `Boss ${at.boss + 1}`}`}>
+    <span
+      className={`boss-face ${resisted ? 'resisted' : ''}`}
+      style={{ width: size, height: size }}
+      title={`R${at.round} · ${b?.name ?? `Boss ${at.boss + 1}`}${resisted ? ` · resists ${resisted}` : ''}`}
+    >
       {b?.icon ? <Img src={b.icon} alt="" eager /> : <span className="boss-initial">{at.boss + 1}</span>}
       <span className="boss-round mono">R{at.round}</span>
     </span>
@@ -45,13 +60,36 @@ const damageDone = (p: Progress) => (p.done ? 1 : 1 - p.hpLeft);
 
 /**
  * How far a team's score carries the run: the boss it arrives at, the bosses
- * it finishes, and the boss (and HP left) it stops at.
+ * it finishes (a Mimic adds its kill bonus), and the boss (and HP left) it
+ * stops at. Points that end exactly on a kill stop there, with the next boss
+ * untouched.
  */
-export function RunSpan({ run, bosses, compact }: { run: TeamRun; bosses: MatrixBoss[] | undefined; compact?: boolean }) {
+export function RunSpan({
+  run,
+  bosses,
+  compact,
+  clashes = [],
+}: {
+  run: TeamRun;
+  bosses: MatrixBoss[] | undefined;
+  compact?: boolean;
+  clashes?: ResistClash[];
+}) {
   const { arrival, departure, kills } = run;
   if (run.end === run.start) return <p className="run-empty muted">Enter the team's points to see how far it carries the run.</p>;
   if (arrival.done) return <p className="run-empty">Run already cleared by earlier teams.</p>;
+  // Ended exactly on a kill: nothing dealt to the next boss yet.
+  const onEdge = !departure.done && departure.ptsIn === 0 && kills.length > 0;
   const sameBoss = !departure.done && departure.round === arrival.round && departure.boss === arrival.boss;
+  // Which elements each boss on the run resists from this team, by "round-boss".
+  const resisted = new Map<string, string>();
+  for (const c of clashes)
+    for (const b of c.bosses) {
+      const k = `${b.round}-${b.boss}`;
+      const el = ELEMENTS[c.element]?.name ?? '';
+      resisted.set(k, [...new Set([...(resisted.get(k)?.split(', ') ?? []), el])].filter(Boolean).join(', '));
+    }
+  const resistAt = (p: BossPoint) => resisted.get(`${p.round}-${p.boss}`);
   const shown = compact ? kills.slice(0, 3) : kills.slice(0, 6);
   const hidden = kills.length - shown.length;
   const name = (p: BossPoint) => bossOf(bosses, p.boss)?.name ?? `Boss ${p.boss + 1}`;
@@ -61,16 +99,21 @@ export function RunSpan({ run, bosses, compact }: { run: TeamRun; bosses: Matrix
       <div className="run-chain">
         {shown.map((k, i) => (
           <span key={i} className="run-kill">
-            <BossFace bosses={bosses} at={k} size={compact ? 28 : 34} />
+            <BossFace bosses={bosses} at={k} size={compact ? 28 : 34} resisted={resistAt(k)} />
             <span className="run-check" aria-hidden="true">
               <Icon name="check" size={10} weight="bold" />
             </span>
+            {k.mimic && SCORE_PLAN.mimicBonus > 0 && (
+              <span className="run-bonus mono" title={`Mimic defeated: +${fmt(SCORE_PLAN.mimicBonus)} points`}>
+                +{SCORE_PLAN.mimicBonus >= 1000 ? `${SCORE_PLAN.mimicBonus / 1000}k` : SCORE_PLAN.mimicBonus}
+              </span>
+            )}
           </span>
         ))}
         {hidden > 0 && <span className="run-more mono">+{hidden}</span>}
-        {!departure.done && (
+        {!departure.done && !onEdge && (
           <span className="run-stop">
-            <BossFace bosses={bosses} at={departure} size={compact ? 28 : 34} />
+            <BossFace bosses={bosses} at={departure} size={compact ? 28 : 34} resisted={resistAt(departure)} />
             <HpBar before={sameBoss ? damageDone(arrival) : 0} mine={damageDone(departure) - (sameBoss ? damageDone(arrival) : 0)} />
           </span>
         )}
@@ -79,6 +122,17 @@ export function RunSpan({ run, bosses, compact }: { run: TeamRun; bosses: Matrix
         {departure.done ? (
           <>
             <strong>Run cleared.</strong> {kills.length} boss{kills.length === 1 ? '' : 'es'} down.
+          </>
+        ) : onEdge ? (
+          <>
+            <strong>
+              {kills.length} kill{kills.length === 1 ? '' : 's'}
+            </strong>
+            , ends right on the kill. Next up{' '}
+            <strong>
+              R{departure.round} {name(departure)}
+            </strong>{' '}
+            at full HP
           </>
         ) : (
           <>
@@ -103,6 +157,12 @@ export function RunSpan({ run, bosses, compact }: { run: TeamRun; bosses: Matrix
               </span>
             )}
           </>
+        )}
+        {run.bonus > 0 && (
+          <span className="run-bonus-text">
+            {' '}
+            · Mimic bonus <span className="mono">+{fmt(run.bonus)}</span>
+          </span>
         )}
       </p>
     </div>
@@ -354,17 +414,52 @@ function BuffPicker({ team }: { team: Team }) {
 }
 
 /** Matrix block under a team's slots: buff, points, and how far those points carry the run. */
+/** Team members whose element a boss on this team's run resists. */
+function ResistNote({ clashes }: { clashes: ResistClash[] }) {
+  if (!clashes.length) return null;
+  return (
+    <div className="mx-resist" role="status">
+      <span className="mx-resist-head">
+        <Icon name="warning" size={13} weight="bold" /> Element resisted on this run
+      </span>
+      <ul>
+        {clashes.map((c) => {
+          // Group repeat visits to the same boss: "Denia R1, R2".
+          const byName = new Map<string, number[]>();
+          for (const b of c.bosses) byName.set(b.name, [...(byName.get(b.name) ?? []), b.round]);
+          return (
+            <li key={c.name}>
+              <ElementIcon id={c.element} size={15} />
+              <strong>{c.name}</strong>
+              <span className="muted">vs</span>
+              <span>
+                {[...byName.entries()].map(([n, rounds]) => `${n} ${rounds.map((r) => `R${r}`).join(', ')}`).join(' · ')}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function MatrixTeamPanel({ team }: { team: Team }) {
   const { byTeam } = useRuns();
   const bosses = useMatrix((s) => s.tower?.bosses);
   const run = byTeam.get(team.id);
+  const clashes = useResistClashes(team, run);
   return (
     <div className="mx-team">
       <div className="mx-row">
         <BuffPicker team={team} />
         <ScoreInput team={team} />
       </div>
-      {run && <RunSpan run={run} bosses={bosses} />}
+      {run ? (
+        <RunSpan run={run} bosses={bosses} clashes={clashes} />
+      ) : (
+        <p className="run-empty muted">Extra team: its points aren't counted in the plan and it isn't exported. Switch it on to count it.</p>
+      )}
+      <ResistNote clashes={clashes} />
     </div>
   );
 }

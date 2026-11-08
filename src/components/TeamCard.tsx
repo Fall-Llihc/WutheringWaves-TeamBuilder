@@ -322,11 +322,25 @@ export const TeamCard = memo(function TeamCard({
             </span>
           </span>
         )}
-        <label className="switch" title="Include this team in the image export">
-          <input type="checkbox" checked={team.include} onChange={(e) => updateTeam(team.id, { include: e.target.checked })} />
-          <span className="switch-track" aria-hidden="true" />
-          <span>Export</span>
-        </label>
+        {matrixMode ? (
+          <>
+            {!team.include && <span className="extra-chip">Extra</span>}
+            <label
+              className="switch"
+              title="On: part of the plan. Off: an extra team, whose points aren't counted and which isn't exported; it's still saved."
+            >
+              <input type="checkbox" checked={team.include} onChange={(e) => updateTeam(team.id, { include: e.target.checked })} />
+              <span className="switch-track" aria-hidden="true" />
+              <span>Active</span>
+            </label>
+          </>
+        ) : (
+          <label className="switch" title="Include this team in the image export">
+            <input type="checkbox" checked={team.include} onChange={(e) => updateTeam(team.id, { include: e.target.checked })} />
+            <span className="switch-track" aria-hidden="true" />
+            <span>Export</span>
+          </label>
+        )}
       </header>
 
       <div className="slots">

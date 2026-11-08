@@ -2985,6 +2985,13 @@ body.is-resizing {
 .mx-legend-item.idle {
   opacity: 0.5;
 }
+/* an extra team keeps its colour, marked as not counted */
+.mx-legend-item.extra {
+  opacity: 0.45;
+}
+.mx-legend-item.extra > span:nth-child(2) {
+  text-decoration: line-through;
+}
 .mx-warn {
   margin: 0;
   padding: 8px 12px;
@@ -3033,6 +3040,128 @@ body.is-resizing {
   .ribbon-label .mono {
     display: none;
   }
+}
+
+/* ---------- Matrix: cycle switch, Mimic bonus, resisted elements ---------- */
+.mx-meta .tw-switch {
+  margin-bottom: 4px;
+}
+/* a boss on the run that resists a team member's element */
+.boss-face.resisted {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 5px var(--accent-soft);
+}
+.boss-face.resisted::after {
+  content: '!';
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  left: 2px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+/* a resisted boss stays bright among the dimmed kills, so it reads at a glance */
+.run-kill .boss-face.resisted {
+  opacity: 1;
+  filter: none;
+}
+/* Mimic kill bonus on its kill in the run chain */
+.run-bonus {
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--vigor);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 13px;
+  white-space: nowrap;
+}
+.run-bonus-text {
+  color: var(--vigor);
+}
+.run-bonus-text .mono {
+  font-weight: 600;
+}
+.ribbon-bonus {
+  position: absolute;
+  z-index: 2;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffe2a8;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+}
+.xm-bonus {
+  color: var(--vigor);
+  font-weight: 600;
+}
+.mx-resist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  font-size: 12.5px;
+}
+.mx-resist-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-hi);
+  font-weight: 600;
+}
+.mx-resist ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mx-resist li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+.mx-resist li strong {
+  color: var(--text);
+}
+
+/* Matrix: a team switched off is an extra (not counted, not exported) */
+.extra-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px dashed var(--line-3);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 /* ---------- planner switch (Builder / Matrix / Tower) ---------- */
@@ -3879,6 +4008,11 @@ body.is-resizing {
 .xm-run span {
   font-size: 12.5px;
   color: var(--text-2);
+}
+.xm-run .xm-bonus {
+  color: var(--vigor);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 .xm-stop {
   display: flex;

@@ -31,8 +31,10 @@ A team planner and showcase maker for Wuthering Waves. Each team holds three res
   - **Floor info**: beside each floor, its enemies with level and element (an enemy takes less damage from its own element), the recommended elements, and the floor's buffs with element names in their colour.
   - **Always the current cycle**: the active cycle is worked out from the date and checked against the tower data, so the plan moves on by itself when a new cycle starts. **Next** plans the cycle after it. Each cycle keeps its own floor teams.
 - **Matrix mode**: plans Singularity Expansion runs.
+  - **Active and next patch**: the switch in the plan summary flips between the running patch and the next one (from `src/data/matrix.txt`). Each keeps its own teams, its own circuit buffs and its own +1 Vigor resonator (`bonus_now`, `bonus_next`). When the next patch's page isn't on nanoka yet, it says so and the teams can still be planned.
+  - **Element resisted on the run**: once a team has points, every boss its points reach (the ones it kills and the one it stops at) is checked against the team's elements. A boss that resists a member's element gets a red mark in the run, and a note lists who is resisted by which boss in which round. Later teams are checked over their own stretch of the run.
   - **Owned roster with Vigor**: mark the resonators you own under **Manage**, then drag them from the roster onto any slot, or click one to fill the active team's next empty slot. Each use in a team costs 1 Vigor; supports have 2, and every Rover (both genders, all elements) shares a single Vigor, so a plan holds one Rover in one element. Characters out of Vigor are greyed out and can't be placed. Max Vigor can be changed per character in **Manage**.
-  - **Points and boss progress**: enter each team's points. Following [wuwamatrix.com](https://wuwamatrix.com/)'s point structure, points are spent on the bosses in order (R1 boss 1 to R5 boss 5), carrying on from the teams before, so every team shows the bosses it finishes and the boss it stops at with its HP left. The Matrix Mimic's 1,000-point kill bonus is not counted as damage.
+  - **Points and boss progress**: enter each team's points. Following [wuwamatrix.com](https://wuwamatrix.com/)'s point structure, points are spent on the bosses in order (R1 boss 1 to R5 boss 5), carrying on from the teams before, so every team shows the bosses it finishes and the boss it stops at with its HP left. Points entered are damage. The Matrix Mimic dies once its points less the 1,000 kill bonus are dealt; the bonus is then added to the total (shown as **+1k** on the kill and in the round ribbon), and any further point goes into the next boss. A team whose points end exactly on a kill shows the next boss as untouched.
   - **Plan summary**: total points, rank (from the game's own thresholds) with the points to the next rank, the rank list (B to Crown II) with the ones reached lit, and a ribbon of every round showing which team dealt each boss's points.
   - **Rank medals**: the game's own medals, kept in `public/ranks/` (`b.png`, `a.png`, `s.png`, `ss.png`, `sss.png`, `crown.png`, `crown2.png`). They aren't on nanoka.cc's asset host, so these copies come from [slyraf.com](https://slyraf.com/en/wuthering-waves/matrix-planner/)'s Matrix planner (converted to 256px PNG). The Vigor icon (`public/icons/vigor.png`) comes from the same place. Replace a file there to change a medal.
   - **Circuit buffs**: pick a buff per team from a card list with the full buff text and how many other teams use it.
@@ -95,16 +97,25 @@ The active cycle is counted from the anchor, then checked against the begin/end 
 
 ### Matrix: `src/data/matrix.txt`
 
-Names the patch whose tower data (buffs, boss line-up, rank thresholds, enhanced resonators) is loaded from nanoka, and holds the score plan:
+Names the patch whose tower data (buffs, boss line-up, rank thresholds, enhanced resonators) is loaded from nanoka, and holds the score plan.
+
+Only `patch` changes when a new patch comes out. The next patch is the one after it in `patches`, so a jump like 3.8 to 4.0 needs no guessing; add new versions to the end of the list when they're announced. Each patch's nanoka page is counted from `anchor` along that list (2 pages per patch).
+
+```ini
+patch = 3.8
+patches = 3.6, 3.7, 3.8, 4.0, 4.1
+anchor = 3.7 : 16                      # one known patch and its page
+bonus_now = Lucilla                    # +1 Vigor in the running patch
+bonus_next =                           # +1 Vigor in the next patch
+```
 
 ```ini
 round = 4680, 4680, 4680, 4680, 6665   # points per boss, one line per round
 mimic_bonus = 1000                     # Matrix Mimic kill bonus
 vigor = Verina : 2                     # Max Vigor (default 1)
-bonus = Hsin                           # this patch's featured resonator: +1 Vigor
 ```
 
-Update the `round` lines when a patch changes the point structure, and the `bonus` line for each patch's featured resonator.
+Update the `round` lines when a patch changes the point structure, and `bonus_now` / `bonus_next` for each patch's featured resonator.
 
 To refresh the `round`, `mimic_bonus` and `vigor` lines, open [wuwamatrix.com](https://wuwamatrix.com/), paste [`scripts/wuwamatrix-console.js`](scripts/wuwamatrix-console.js) into the browser console (F12) and press Enter. It prints the lines in this file's format and copies them to the clipboard.
 

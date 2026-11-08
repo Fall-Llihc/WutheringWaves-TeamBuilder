@@ -24,9 +24,9 @@ import { Icon, Img, Modal, Toast } from './components/ui';
 import { ELEMENTS, UNKNOWN_ID } from './lib/data';
 import { buildBackup, downloadBlob, parseImportFile, timestamp, type ImportResult } from './lib/fileFormat';
 import { lookupCharacter, useGame } from './lib/game';
-import { MATRIX, useMatrix } from './lib/matrix';
+import { MATRIX, matrixBoard, patchOfPage, useMatrix } from './lib/matrix';
 import { placementError } from './lib/budget';
-import { SCORE_PLAN } from './lib/matrixPlan';
+import { bonusFor } from './lib/matrixPlan';
 import { rosterKey } from './lib/roster';
 import { useTheme } from './lib/theme';
 import { newTeam, useStore, type Mode, type SlotRef, type Team, type TeamDropMode } from './lib/store';
@@ -52,6 +52,17 @@ function readRosterWidth() {
 const isFull = (t: Team) => t.slots.every((s) => s.charId);
 
 /** The next team after `fromId` (wrapping round) that still has an empty slot, or null. */
+/** A Matrix cycle's first teams: an old single 'matrix' board if one is still put away, else one empty team. */
+function freshMatrix(): Team[] {
+  const { boards } = useStore.getState();
+  const legacy = boards.matrix;
+  if (!legacy?.length) return [newTeam(1)];
+  const rest = { ...boards };
+  delete rest.matrix;
+  useStore.setState({ boards: rest });
+  return legacy;
+}
+
 function nextOpenTeam(list: Team[], fromId: string): string | null {
   const start = list.findIndex((t) => t.id === fromId);
   for (let k = 1; k < list.length; k++) {
@@ -115,6 +126,9 @@ export default function App() {
   const [towerWhich, setTowerWhich] = useState<'current' | 'next'>('current');
   const towerId = towerWhich === 'current' ? towerActiveId : towerActiveId + 1;
   const towerCycle = towerCycles[towerId] ?? null;
+  // Matrix: plan the active patch's cycle or the next patch's.
+  const [matrixWhich, setMatrixWhich] = useState<'current' | 'next'>('current');
+  const matrixPage = matrixWhich === 'next' && MATRIX.next ? MATRIX.next.page : MATRIX.page;
   const [presetFor, setPresetFor] = useState<string | null>(null);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
@@ -161,9 +175,19 @@ export default function App() {
     remap((id) => (id === UNKNOWN_ID || data.characters[id] ? null : data.aliases[id] ?? null));
   }, [data, teams, remap]);
 
+  // Matrix: show the chosen cycle's data (and check whether the next one is out), and keep the open board on that cycle.
   useEffect(() => {
-    if (data && matrixMode) useMatrix.getState().load(data.version);
-  }, [data, matrixMode]);
+    if (!data || !matrixMode) return;
+    useMatrix.getState().select(matrixPage, data.version);
+    if (MATRIX.next) useMatrix.getState().prefetch(MATRIX.next.page, data.version);
+  }, [data, matrixMode, matrixPage]);
+  useEffect(() => {
+    if (!matrixMode) return;
+    const want = matrixBoard(matrixPage);
+    // Saves from before Matrix had cycles keep one 'matrix' board: it becomes the active cycle's.
+    if (board === 'matrix') useStore.setState({ board: want });
+    else if (board !== want) store.switchBoard(want, freshMatrix);
+  }, [matrixMode, matrixPage, board, store]);
 
   // Tower: find the active cycle (and load the next), then keep the open board on the chosen cycle.
   useEffect(() => {
@@ -182,6 +206,7 @@ export default function App() {
     if (m === mode) return;
     setActiveTeamId(null);
     if (m === 'tower') store.switchBoard(towerBoard(towerId), floorTeams);
+    else if (m === 'matrix') store.switchBoard(matrixBoard(matrixPage), freshMatrix);
     else store.switchBoard(m, () => [newTeam(1)]);
   };
 
@@ -376,8 +401,8 @@ export default function App() {
         : `Loaded ${preset.name || 'the preset'} into ${presetTeam.name || 'the team'}.`,
     );
   };
-  // This patch's featured resonators from matrix.txt's bonus lines, by their game name.
-  const bonusNames = SCORE_PLAN.bonus.map(
+  // The open cycle's featured resonators from matrix.txt's bonus lines, by their game name.
+  const bonusNames = bonusFor(board).map(
     (key) => Object.values(data?.characters ?? {}).find((c) => rosterKey(c.name) === key)?.name ?? key,
   );
 
@@ -429,9 +454,10 @@ export default function App() {
               {tower ? 'Floors' : 'Teams'} <span className="mono count">{teams.length}</span>
             </h2>
             {matrixMode && (
-              <p className="patch-tag" title="Set in src/data/matrix.txt (patch and bonus lines)">
+              <p className="patch-tag" title="Set in src/data/matrix.txt (patch, patches and bonus_now / bonus_next lines)">
                 <span className="patch-tag-key">Matrix</span>
-                <span>Patch {MATRIX.patch}</span>
+                <span>Patch {patchOfPage(matrixPage)}</span>
+                <span>{matrixWhich === 'next' ? 'Next' : 'Active'}</span>
                 {matrixPhase ? <span>{matrixPhase}</span> : null}
                 {bonusNames.length ? <span>+1 Vigor: {bonusNames.join(', ')}</span> : null}
               </p>
@@ -465,10 +491,16 @@ export default function App() {
               ))}
             </div>
             <button className="link" onClick={() => store.setAllIncluded(includedCount !== teams.length)}>
-              {includedCount === teams.length ? 'Exclude all from export' : 'Include all in export'}
+              {matrixMode
+                ? includedCount === teams.length
+                  ? 'Set all extra'
+                  : 'Set all active'
+                : includedCount === teams.length
+                  ? 'Exclude all from export'
+                  : 'Include all in export'}
             </button>
             <span className="mono muted">
-              {includedCount}/{teams.length} in export
+              {includedCount}/{teams.length} {matrixMode ? 'active' : 'in export'}
             </span>
             {confirmReset ? (
               <span className="confirm">
@@ -527,7 +559,7 @@ export default function App() {
               />
             )}
             <div className="matrix-main">
-              {matrixMode && <MatrixSummary />}
+              {matrixMode && <MatrixSummary which={matrixWhich} onWhich={setMatrixWhich} />}
               {tower && <TowerSummary which={towerWhich} onWhich={setTowerWhich} />}
               {tower ? (
                 <div className="tower-rows">

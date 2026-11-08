@@ -1,9 +1,10 @@
 import { forwardRef, useMemo } from 'react';
 import { activeMode, ELEMENTS, slotElement, UNKNOWN_ID } from '../lib/data';
 import { lookupCharacter, modesOf, useGame } from '../lib/game';
-import { findBuff, MATRIX, useMatrix } from '../lib/matrix';
-import { FALLBACK_RANKS, RANK_LABELS, rankOf, SCORE_PLAN, teamRuns, type TeamRun } from '../lib/matrixPlan';
-import type { Team } from '../lib/store';
+import { findBuff, patchOfPage, useMatrix } from '../lib/matrix';
+import { mimicOf } from '../lib/matrixHooks';
+import { FALLBACK_RANKS, RANK_LABELS, rankOf, runTotal, SCORE_PLAN, teamRuns, type TeamRun } from '../lib/matrixPlan';
+import { useStore, type Team } from '../lib/store';
 import { RunRibbon, teamColor } from './MatrixSummary';
 import { BossFace, bossOf, fmt, pct } from './MatrixTeam';
 import { RankIcon } from './RankIcon';
@@ -18,6 +19,8 @@ function SheetTeam({ team, index, run, showRanks }: { team: Team; index: number;
   const buff = findBuff(tower, team.buffId ?? null);
   const stop = run.departure;
   const stopName = !stop.done ? bossOf(tower?.bosses, stop.boss)?.name ?? `Boss ${stop.boss + 1}` : '';
+  // Ended exactly on a kill: the next boss is untouched, so there's no stop to show.
+  const onEdge = !stop.done && stop.ptsIn === 0 && run.kills.length > 0;
 
   return (
     <div className="xm-team" style={{ '--team': teamColor(index) } as React.CSSProperties}>
@@ -43,12 +46,16 @@ function SheetTeam({ team, index, run, showRanks }: { team: Team; index: number;
         <span className="xm-buff-name">{buff?.name ?? 'No buff'}</span>
       </div>
       <div className="xm-run">
-        <strong className="mono">{fmt(team.score ?? 0)}</strong>
+        {/* the team's points with its Mimic bonus already counted in */}
+        <strong className="mono">{fmt((team.score ?? 0) + run.bonus)}</strong>
+        {run.bonus > 0 ? <span className="xm-bonus mono">incl. +{fmt(run.bonus)} Mimic bonus</span> : null}
         <span>
           {!team.score ? (
             'No points yet'
           ) : stop.done ? (
             'Run cleared'
+          ) : onEdge ? (
+            `${run.kills.length} kill${run.kills.length === 1 ? '' : 's'} · next R${stop.round} ${stopName}`
           ) : (
             <>
               {run.kills.length ? `${run.kills.length} kill${run.kills.length === 1 ? '' : 's'} · ` : ''}R{stop.round} {stopName}{' '}
@@ -57,7 +64,7 @@ function SheetTeam({ team, index, run, showRanks }: { team: Team; index: number;
           )}
         </span>
       </div>
-      {!stop.done && team.score ? (
+      {!stop.done && !onEdge && team.score ? (
         <span className="xm-stop">
           <BossFace bosses={tower?.bosses} at={stop} size={44} />
         </span>
@@ -79,20 +86,27 @@ export const MatrixSheet = forwardRef<HTMLDivElement, { teams: Team[]; title: st
       teamRuns(
         teams.map((t) => t.score ?? 0),
         SCORE_PLAN,
-        (b) => /mimic/i.test(tower?.bosses?.[b]?.name ?? (b === 4 ? 'Mimic' : '')),
+        mimicOf(tower?.bosses),
       ),
     [teams, tower],
   );
-  const total = runs.at(-1)?.end ?? 0;
+  const total = runTotal(runs);
   const rank = rankOf(total, tower?.ranks?.length ? tower.ranks : FALLBACK_RANKS);
-  const names = teams.map((t, i) => t.name || `Team ${i + 1}`);
+  // Number and colour follow each team's place among all teams, as on screen.
+  const all = useStore((s) => s.teams);
+  const place = (t: Team, i: number) => {
+    const at = all.findIndex((a) => a.id === t.id);
+    return at < 0 ? i : at;
+  };
+  const names = teams.map((t, i) => t.name || `Team ${place(t, i) + 1}`);
+  const colors = teams.map((t, i) => place(t, i));
 
   return (
     <div ref={ref} className="x-sheet xm-sheet" style={{ width: MATRIX_SHEET_W }}>
       <header className="xm-head">
         <div>
           <span className="eyebrow">
-            Matrix · patch {MATRIX.patch}
+            Matrix · patch {patchOfPage(tower?.page ?? 0)}
             {tower?.phase ? ` · ${tower.phase}` : ''}
           </span>
           <div className="x-title">{title.trim() || 'Matrix plan'}</div>
@@ -108,11 +122,11 @@ export const MatrixSheet = forwardRef<HTMLDivElement, { teams: Team[]; title: st
         </div>
       </header>
 
-      <RunRibbon runs={runs} bosses={tower?.bosses} names={names} />
+      <RunRibbon runs={runs} bosses={tower?.bosses} names={names} colors={colors} />
 
       <div className="xm-teams">
         {teams.map((t, i) => (
-          <SheetTeam key={t.id} team={t} index={i} run={runs[i]} showRanks={showRanks} />
+          <SheetTeam key={t.id} team={t} index={colors[i]} run={runs[i]} showRanks={showRanks} />
         ))}
       </div>
 

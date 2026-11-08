@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { boardCycle } from '../lib/budget';
 import { ELEMENTS, UNKNOWN_ID } from '../lib/data';
 import { lookupCharacter, useGame } from '../lib/game';
-import { vigorMax, vigorGroup, vigorUsage } from '../lib/matrixPlan';
+import { bonusFor, vigorMax, vigorGroup, vigorUsage } from '../lib/matrixPlan';
 import { useStore, type Team } from '../lib/store';
 import { costUsage, TOWER, useTower } from '../lib/tower';
 import { Icon, Img, Modal, VigorIcon } from './ui';
@@ -46,7 +46,7 @@ export function PresetPicker({ teamId, onPick, onClose }: { teamId: string; onPi
               const c = lookupCharacter(data, s.charId);
               if (!c || c.id === UNKNOWN_ID) return null;
               const used = usage[vigorGroup(c.id)] ?? 0;
-              const max = mode === 'tower' ? TOWER.cost : vigorMax(c, overrides);
+              const max = mode === 'tower' ? TOWER.cost : vigorMax(c, overrides, bonusFor(board));
               return used > max ? { used, max } : null;
             }),
             missing: p.slots.map((s) => !!s.charId && s.charId !== UNKNOWN_ID && !owned[s.charId]),

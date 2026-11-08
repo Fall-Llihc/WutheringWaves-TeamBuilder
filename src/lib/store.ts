@@ -36,9 +36,9 @@ export interface Team {
  */
 export type Mode = 'builder' | 'matrix' | 'tower';
 
-/** Board keys: 'builder', 'matrix', or 'tower:<cycle>'. */
-const BOARD_KEY = /^(builder|matrix|tower:\d+)$/;
-export const boardMode = (board: string): Mode => (board.startsWith('tower:') ? 'tower' : board === 'matrix' ? 'matrix' : 'builder');
+/** Board keys: 'builder', 'matrix:<page>' (one per Matrix cycle; plain 'matrix' in older saves), or 'tower:<cycle>'. */
+const BOARD_KEY = /^(builder|matrix(:\d+)?|tower:\d+)$/;
+export const boardMode = (board: string): Mode => (board.startsWith('tower:') ? 'tower' : board.startsWith('matrix') ? 'matrix' : 'builder');
 
 export interface SlotRef {
   teamId: string;

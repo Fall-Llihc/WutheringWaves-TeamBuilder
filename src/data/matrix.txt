@@ -1,24 +1,36 @@
-# Matrix (Singularity Expansion) circuit buffs.
+# Matrix (Singularity Expansion): which patch to plan, and its score plan.
 #
-# The buffs come from nanoka's tower page for the current patch:
-#   https://ww.nanoka.cc/newtower/<page>/
-# The page number goes up by 2 every patch (3.6 = 14, 3.7 = 16, 3.8 = 18, ...),
-# so only the patch needs changing when a new one comes out.
+# ---------------------------------------------------------------------------
+# Patches (the active cycle and the next one)
 #
-#   patch  = the patch to use
-#   anchor = a patch and its known page number; every other patch is
-#            counted from it, `step` pages per patch
-#   step   = page numbers per patch
+# patch    = the patch running now. This is the only line to change when a
+#            new patch comes out.
+# patches  = every patch in release order. The next cycle is the patch after
+#            `patch` in this list, so 3.8 -> 4.0 works without guessing. Add
+#            new versions to the end when they're announced.
+# anchor   = one patch and its nanoka page (https://ww.nanoka.cc/newtower/<page>/).
+#            Every patch adds `step` pages (the odd pages are Stability Accords),
+#            so each patch's page is counted from here along `patches`.
 #
-# Patches are counted by their minor number (3.5 -> 3.7 is two patches).
-# When the major version changes (3.x -> 4.0), add an anchor for the new
-# major once its page is known, e.g. "anchor = 4.0 : 20". The closest
-# anchor at or below the patch, within the same major version, is used.
+# The app shows the page each patch maps to (Tower data link) and says when
+# the next patch's page isn't published yet.
+# ---------------------------------------------------------------------------
 
-patch = 3.8
+patch = 3.7
+patches = 3.6, 3.7, 3.8, 4.0, 4.1, 4.2, 4.3, 4.4
 
 step = 2
 anchor = 3.7 : 16
+
+# ---------------------------------------------------------------------------
+# +1 Vigor resonator of each cycle (the patch's featured resonator).
+# bonus_now  = the active cycle (patch above)
+# bonus_next = the next cycle; leave empty until it's known
+# Several resonators: one line each.
+# ---------------------------------------------------------------------------
+
+bonus_now = Lynae
+bonus_next = Lucilla
 
 # ---------------------------------------------------------------------------
 # Score plan (Matrix mode)
@@ -27,8 +39,10 @@ anchor = 3.7 : 16
 #         round's last boss). One line per round, in order. A team's score is
 #         spent on the bosses in this order: R1 boss 1, R1 boss 2, ... R5 boss 5.
 #         Numbers from wuwamatrix.com's point structure for patch 3.7.
-# mimic_bonus = points granted for defeating a Matrix Mimic. Its share of a
-#         boss is not damage, so it is left out of that boss's HP bar.
+# mimic_bonus = points granted for defeating a Matrix Mimic (the 5th boss of
+#         each round). The points entered for a team are damage: the Mimic dies
+#         after its points minus this bonus, the bonus is added to the total on
+#         top, and any damage past that goes into the next boss.
 # ---------------------------------------------------------------------------
 
 # Dari wuwamatrix.com, 2026-11-07
@@ -47,4 +61,3 @@ vigor = Verina : 2
 vigor = Baizhi : 2
 vigor = Buling : 2
 
-bonus = Lucilla
